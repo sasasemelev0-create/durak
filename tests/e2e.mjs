@@ -175,56 +175,103 @@ try {
   // ---------- доигрываем до конца ----------
   console.log('\nДоигрывание партии');
   const all = { u_alice: A, u_bob: B };
+  const lastHash = { u_alice: null, u_bob: null };
   let over = false;
-  for (let i = 0; i < 900 && !over; i++) {
-    let actedAny = false;
+
+  const hashOf = (st) => JSON.stringify([
+    st.phase, !!st.takePhase, st.table.length,
+    st.players.map(p => p.count), st.you?.hand?.length, st.you?.passed, st.you?.canConfirmTake
+  ]);
+
+  for (let i = 0; i < 3000 && !over; i++) {
+    let acted = false;
+
     for (const cid of Object.keys(all)) {
       const st = all[cid].last(m => m.t === 'room' && m.game)?.game;
       if (!st) continue;
       if (st.phase === 'over') { over = true; break; }
 
-      // фаза «беру»: пасуют все кроме защитника, защитник забирает
+      // действуем только когда пришло новое состояние — иначе шлём дубли
+      const h = hashOf(st);
+      if (lastHash[cid] === h) continue;
+
       if (st.takePhase?.active) {
         if (st.you.isDefender) {
-          if (st.you.canConfirmTake) { all[cid].send({ t: 'act', action: 'confirmTake' }); actedAny = true; }
+          if (st.you.canConfirmTake) { lastHash[cid] = h; all[cid].send({ t: 'act', action: 'confirmTake' }); acted = true; }
         } else if (!st.you.passed) {
-          all[cid].send({ t: 'act', action: 'passPodkid' }); actedAny = true;
+          lastHash[cid] = h; all[cid].send({ t: 'act', action: 'passPodkid' }); acted = true;
         }
         continue;
       }
+
       if (st.attackerId !== cid && st.defenderId !== cid) continue;
 
+      // страховка: если защитник не может/не хочет — забирает
+      const forceTake = st.defenderId === cid && st.table.length > 0 && st.takePhase == null;
+
       if (st.defenderId === cid) {
-        const undef = st.table.filter(s => !s.defense);
+        const undef = st.table.filter(x => !x.defense);
         if (undef.length) {
           const slot = undef[0];
           const beat = st.you.hand.find(c => c.s === slot.attack.s
             ? c.r > slot.attack.r
             : (c.s === st.trump && slot.attack.s !== st.trump));
-          if (beat) all[cid].send({ t: 'act', action: 'defend', cardId: beat.id });
+          lastHash[cid] = h;
+          if (beat) all[cid].send({ t: 'act', action: 'defend', cardId: beat.id, targetCardId: slot.attack.id });
           else all[cid].send({ t: 'act', action: 'take' });
-          actedAny = true;
+          acted = true;
         }
       } else {
-        const legalRank = new Set();
-        for (const s of st.table) { legalRank.add(s.attack.r); if (s.defense) legalRank.add(s.defense.r); }
+        // атакующая сторона: соблюдаем те же правила, что и кнопки в интерфейсе
+        const ranks = new Set();
+        for (const sl of st.table) { ranks.add(sl.attack.r); if (sl.defense) ranks.add(sl.defense.r); }
+
+        const defCount = st.players.find(x => x.id === st.defenderId)?.count ?? 0;
+        const undefCount = st.table.filter(x => !x.defense).length;
+        const tableFull = st.table.length >= 6;
+        // подкинуть можно, только если защитнику хватит карт
+        const roomForMore = undefCount + 1 <= defCount;
+
         const card = st.table.length === 0
           ? st.you.hand[0]
-          : st.you.hand.find(c => legalRank.has(c.r));
-        if (card && st.table.length < 6) {
+          : st.you.hand.find(c => ranks.has(c.r));
+
+        if (card && !tableFull && roomForMore) {
+          lastHash[cid] = h;
           all[cid].send({ t: 'act', action: 'attack', cardId: card.id });
-          actedAny = true;
-        } else if (st.table.length && st.table.every(s => s.defense)) {
+          acted = true;
+        } else if (st.table.length && st.table.every(x => x.defense)) {
+          lastHash[cid] = h;
           all[cid].send({ t: 'act', action: 'endBout' });
-          actedAny = true;
+          acted = true;
         }
       }
     }
-    await sleep(22);
-    const stA = A.last(m => m.t === 'room' && m.game)?.game;
-    if (stA?.phase === 'over') over = true;
-    if (!actedAny && !over) await sleep(60);
+
+    // тупик в боте: никто не смог сходить — защитник забирает карты
+    if (!acted) {
+      const st = A.last(m => m.t === 'room' && m.game)?.game;
+      if (st && st.phase !== 'over') {
+        if (st.takePhase?.active) {
+          // защитник подтверждает, остальные пасуют
+          for (const cid of Object.keys(all)) {
+            const s2 = all[cid].last(m => m.t === 'room' && m.game)?.game;
+            if (!s2) continue;
+            if (s2.you.isDefender) all[cid].send({ t: 'act', action: 'confirmTake' });
+            else if (!s2.you.passed) all[cid].send({ t: 'act', action: 'passPodkid' });
+          }
+        } else if (st.table.length) {
+          const defCid = st.defenderId;
+          if (all[defCid]) all[defCid].send({ t: 'act', action: 'take' });
+        }
+        acted = true;
+      }
+    }
+
+    await sleep(acted ? 26 : 70);
+    if (A.last(m => m.t === 'room' && m.game)?.game?.phase === 'over') over = true;
   }
+
   const finalA = A.last(m => m.t === 'room' && m.game)?.game;
   ok(!!finalA, 'состояние получено');
   ok(finalA.phase === 'over', 'партия дошла до конца', finalA?.phase);

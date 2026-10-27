@@ -32,7 +32,9 @@ export class Durak {
     this.rnd = rnd;
 
     let deck = shuffle(buildDeck(this.opts.deckSize), rnd);
-    this.trumpCard = deck[deck.length - 1];
+    // Козырь лежит снизу колоды и раздаётся последним.
+    // Раздача идёт через pop() (с конца массива), поэтому козырь ставим в начало.
+    this.trumpCard = deck[0];
     this.trump = this.trumpCard.s;
 
     this.players = this.opts.players.map((p, i) => ({
@@ -195,7 +197,8 @@ export class Durak {
       exitOrder: this.exitOrder,
       pendingCheat: this.pendingCheat ? {
         playerId: this.players[this.pendingCheat.playerIdx].id,
-        playerName: this.players[this.pendingCheat.playerIdx].name
+        playerName: this.players[this.pendingCheat.playerIdx].name,
+        cardId: this.pendingCheat.cardId
       } : null,
       log: this.log.slice(-40),
       opts: { ...this.opts, seed: undefined }
@@ -272,6 +275,10 @@ export class Durak {
     // в фазе беру нельзя подкидывать тому, кто уже сказал «пас»
     if (this.takePending && this.takePending.passed.has(p.id))
       return { ok: false, why: 'Вы уже сказали пас' };
+    // при незамеченном обмане подкидывать можно — спор уже не блокирует игру
+    if (this.pendingCheat && !cheat) {
+      // не блокируем, просто помечаем что спор висит
+    }
 
     const chk = this.canAttackWith(idx, card);
     const cheating = !chk.ok;
@@ -386,7 +393,9 @@ export class Durak {
       return { ok: false, why: 'Завершать кон может только атакующая сторона' };
     if (this.table.some(s => !s.defense))
       return { ok: false, why: 'Есть неотбитые карты' };
-    if (this.pendingCheat) return { ok: false, why: 'Сначала решите спор о шулерстве' };
+
+    // незамеченный обман не блокирует кон — карты просто уходят в отбой
+    this.pendingCheat = null;
 
     this.discard.push(...this.table.flatMap(s => [s.attack, s.defense]));
     this.pushLog(`Бито. ${this.player(this.defenderIdx).name} отбился`);
@@ -402,7 +411,6 @@ export class Durak {
     if (this.takePending) return { ok: false, why: 'Вы уже взяли — ждём подкидывания' };
     const idx = this.idxOf(playerId);
     if (idx !== this.defenderIdx) return { ok: false, why: 'Взять может только защищающийся' };
-    if (this.pendingCheat) return { ok: false, why: 'Сначала решите спор о шулерстве' };
     if (!this.table.length) return { ok: false, why: 'На столе нет карт' };
 
     this.takePending = { defenderIdx: idx, passed: new Set() };
@@ -444,6 +452,7 @@ export class Durak {
   // Игрок сказал «пас» в фазе беру
   passPodkid(playerId) {
     if (!this.takePending) return { ok: false, why: 'Сейчас нечего подкидывать' };
+    // незамеченный обман не мешает пасовать
     const p = this.playerById(playerId);
     if (!p) return { ok: false, why: 'Нет игрока' };
     if (p.idx === this.takePending.defenderIdx)
@@ -468,6 +477,21 @@ export class Durak {
       return { ok: false, why: 'Дождитесь, пока остальные скажут пас' };
 
     const d = this.players[idx];
+
+    // Если кто-то сшулерил и его НЕ поймали — карты уходят в отбой, защитник их не забирает.
+    if (this.pendingCheat) {
+      const cards = this.table.flatMap(sl => [sl.attack, sl.defense]).filter(Boolean);
+      this.discard.push(...cards);
+      this.pushLog('Обман не заметили — карты уходят в отбой');
+      this.table = [];
+      this.takePending = null;
+      this.pendingCheat = null;
+      this.phase = 'defend';
+      this.refillHands();
+      this.afterBout(idx, false);   // кон закрыт «бито», а не «взял»
+      return { ok: true, discarded: true };
+    }
+
     const cards = this.table.flatMap(sl => [sl.attack, sl.defense]).filter(Boolean);
     d.hand.push(...cards);
     this.pushLog(`${d.name} забирает ${cards.length} карт`);
@@ -648,7 +672,10 @@ export class Durak {
       this.table.splice(this.pendingCheat.slotIndex, 1);
     }
     cheater.cheatsLocked = true;
+    const wasTake = !!this.takePending;
     this.pendingCheat = null;
+    if (wasTake) this.phase = 'take';
+    else if (this.table.length === 0) this.phase = 'attack';
     if (this.table.length === 0) this.phase = 'attack';
 
     this.pushLog(`${acc.name} поймал ${cheater.name} за руку. Карта возвращена, обманывать он больше не может`);

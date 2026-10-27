@@ -243,11 +243,13 @@ function renderRoom(m) {
     Ставка: <b style="color:var(--gold)">${r.bet || 0}</b> · Ваш баланс: <b style="color:var(--gold)">${state.me?.balance ?? 0}</b>`;
 
   const isHost = m.hostId === m.me;
-  // кнопка «Готов» видна всем
+  // Кнопка «Готов» живёт ТОЛЬКО в лобби и исчезает, как только партия началась
   const btn = $('start-game');
+  const inGameNow = !!m.game && m.game.phase !== 'over';
   const meP = m.players.find(p => p.id === m.me);
   const iAmReady = !!meP?.ready;
-  btn.style.display = 'block';
+
+  btn.style.display = inGameNow ? 'none' : 'block';
   btn.disabled = m.players.length < 2;
   btn.textContent = iAmReady ? 'Вы готовы ✓' : 'Готов';
   btn.style.background = iAmReady
@@ -256,9 +258,10 @@ function renderRoom(m) {
   btn.style.color = iAmReady ? '#fff' : '#7a2f2b';
 
   const readyCount = m.players.filter(p => p.ready).length;
-  $('ready-hint').textContent = m.players.length < 2
-    ? 'Нужно минимум 2 игрока'
-    : `Готовы: ${readyCount} из ${m.players.length}. Партия начнётся, когда готовы все`;
+  $('ready-hint').textContent = inGameNow ? ''
+    : m.players.length < 2
+      ? 'Нужно минимум 2 игрока'
+      : `Готовы: ${readyCount} из ${m.players.length}. Партия начнётся, когда готовы все`;
 
   // переход к столу
   if (m.game && m.game.phase !== 'over') {
@@ -382,10 +385,15 @@ function renderTable(g) {
   $('deck-count').textContent = g.deckCount;
   $('deck-pile').classList.toggle('empty', g.deckCount === 0);
   const tr = g.trumpCard;
-  $('trump-rank').textContent = RANK[tr.r];
-  $('trump-suit').textContent = SUIT[tr.s];
-  const red = tr.s === 1 || tr.s === 2;
-  $('trump-card').style.color = red ? '#d4352f' : '#1b2733';
+  // козырь показываем только пока он реально лежит под колодой
+  const showTrump = g.deckCount > 0 && !!tr;
+  $('trump-card').style.display = showTrump ? 'flex' : 'none';
+  if (showTrump) {
+    $('trump-rank').textContent = RANK[tr.r];
+    $('trump-suit').textContent = SUIT[tr.s];
+    const red = tr.s === 1 || tr.s === 2;
+    $('trump-card').style.color = red ? '#d4352f' : '#1b2733';
+  }
   $('discard-count').textContent = g.discardCount;
 
   // ---- кнопка отмены (слева от аватарки) ----
@@ -398,11 +406,24 @@ function renderTable(g) {
   const prevCount = bf.children.length;
   const oldEls = [...bf.children].map(el => el.querySelector('.atk'));
   bf.innerHTML = '';
+  const suspicion = g.pendingCheat?.cardId || null;
   (g.table || []).forEach(slot => {
     const s = document.createElement('div');
     s.className = 'slot';
     s.dataset.attackId = slot.attack.id;
     s.dataset.defended = slot.defense ? '1' : '0';
+
+    // спорная (шулерская) карта — подсвечиваем и делаем кликабельной
+    const isSuspect = suspicion && slot.attack.id === suspicion;
+    if (isSuspect) {
+      s.classList.add('suspect');
+      s.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        send({ t: 'act', action: 'accuse', targetId: g.pendingCheat.playerId });
+        toast('Пойман за руку: ' + g.pendingCheat.playerName);
+      });
+    }
+
     const a = cardEl(slot.attack, { dim: !!slot.defense });
     a.classList.add('atk'); s.appendChild(a);
     if (slot.defense) { const df = cardEl(slot.defense); df.classList.add('def'); s.appendChild(df); }
@@ -503,6 +524,15 @@ function renderBar(g) {
     box.appendChild(b);
     return b;
   };
+
+  // спорная карта: любой, кроме шулера, может нажать «Поймать»
+  if (g.pendingCheat && g.pendingCheat.playerId !== me.id) {
+    const sBtn = document.createElement('button');
+    sBtn.className = 'pill-btn take';
+    sBtn.innerHTML = `${ICONS.ready}<span>Поймать</span><span class="sub">${esc(g.pendingCheat.playerName)}</span>`;
+    sBtn.onclick = () => send({ t: 'act', action: 'accuse', targetId: g.pendingCheat.playerId });
+    box.appendChild(sBtn);
+  }
 
   // ================= фаза «беру» =================
   if (takePhase) {
