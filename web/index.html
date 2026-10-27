@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Дурак</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --bg:#1e2a38; --felt:#2b5f7a; --felt2:#24506a; --card:#f7f4ec; --ink:#1b2733;
+  --red:#d4352f; --gold:#e8c06a; --white:#fff; --dim:rgba(255,255,255,.62);
+  --line:rgba(255,255,255,.14);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg); color:#fff; user-select:none;
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+#app{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ---------- общее ---------- */
+.screen{display:none;height:100%;flex-direction:column;overflow-y:auto;overflow-x:hidden}
+.screen.on{display:flex}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;flex:none}
+.title{font-size:17px;font-weight:600}
+.back{background:none;border:0;color:#fff;font-size:22px;padding:4px 10px 4px 0;cursor:pointer}
+
+/* ---------- лобби ---------- */
+.lobby-body{padding:0 16px 24px;flex:1}
+.label{font-size:13px;color:var(--dim);margin:18px 0 8px;letter-spacing:.3px;text-transform:uppercase;font-weight:600}
+.value{font-size:28px;font-weight:700;text-align:center;margin-bottom:6px}
+input[type=range]{
+  -webkit-appearance:none;width:100%;height:6px;border-radius:3px;
+  background:linear-gradient(90deg,var(--gold) var(--p,20%),rgba(255,255,255,.2) var(--p,20%));
+  outline:none;margin:10px 0;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:26px;height:26px;border-radius:50%;
+  background:#fff;border:3px solid var(--gold);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.4);
+}
+.ticks{display:flex;justify-content:space-between;font-size:11px;color:var(--dim)}
+.seg{display:flex;background:rgba(255,255,255,.1);border-radius:12px;padding:4px;gap:2px}
+.seg button{
+  flex:1;background:none;border:0;color:#fff;padding:11px 4px;font-size:15px;font-weight:600;
+  border-radius:9px;cursor:pointer;transition:.15s;font-family:inherit;
+}
+.seg button.on{background:#fff;color:var(--red)}
+.row{display:flex;gap:10px}
+.row > *{flex:1}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.mode-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.mode{
+  background:rgba(255,255,255,.1);border:2px solid transparent;border-radius:12px;
+  padding:12px 4px;text-align:center;cursor:pointer;font-size:11px;line-height:1.25;
+  position:relative;transition:.15s;color:#fff;font-family:inherit;
+}
+.mode.on{background:#fff;color:var(--ink);border-color:var(--gold)}
+.mode.on::after{content:'✓';position:absolute;top:2px;right:5px;color:var(--red);font-weight:700;font-size:13px}
+.mode svg{display:block;margin:0 auto 5px;width:24px;height:24px}
+.pill{background:rgba(0,0,0,.22);border-radius:10px;padding:12px;display:flex;align-items:center;gap:10px}
+.pill input{
+  background:none;border:0;color:#fff;font-size:16px;flex:1;outline:none;font-family:inherit;
+}
+.pill input::placeholder{color:rgba(255,255,255,.4)}
+.btn{
+  width:100%;padding:16px;border-radius:14px;border:0;font-size:17px;font-weight:700;
+  cursor:pointer;font-family:inherit;transition:.15s;
+}
+.btn:active{transform:scale(.98)}
+.btn-primary{background:linear-gradient(180deg,#fff,#e9e4d8);color:#7a2f2b}
+.btn-primary:disabled{opacity:.4}
+.btn-ghost{background:rgba(255,255,255,.12);color:#fff}
+.btn-danger{background:rgba(212,53,47,.85);color:#fff}
+
+/* ---------- нижняя навигация ---------- */
+.tabs{
+  display:flex;flex:none;background:rgba(0,0,0,.28);border-top:1px solid var(--line);
+  padding:8px 0 6px;
+}
+.tabs button{
+  flex:1;background:none;border:0;color:rgba(255,255,255,.55);font-size:10px;
+  display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;font-family:inherit;
+}
+.tabs button.on{color:#fff}
+.tabs svg{width:24px;height:24px;fill:currentColor}
+
+/* ---------- профиль ---------- */
+.profile-head{display:flex;align-items:center;gap:14px;padding:8px 16px 20px}
+.avatar{
+  width:64px;height:64px;border-radius:50%;background:var(--felt2);
+  display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;
+  overflow:hidden;flex:none;
+}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.pname{font-size:20px;font-weight:700}
+.pstats{font-size:13px;color:var(--dim);margin-top:4px}
+.card-list{padding:0 16px}
+.menu-item{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px;border-bottom:1px solid var(--line);font-size:15px;
+}
+.menu-item:last-child{border-bottom:0}
+
+/* ---------- список лобби ---------- */
+.room{
+  background:rgba(255,255,255,.08);border-radius:14px;padding:14px;
+  margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;
+}
+.room-info{flex:1;min-width:0}
+.room-id{font-weight:700;font-size:16px;letter-spacing:1px}
+.room-meta{font-size:12px;color:var(--dim);margin-top:4px}
+.badge{
+  background:var(--gold);color:#4a3520;border-radius:8px;padding:3px 8px;
+  font-size:11px;font-weight:700;margin-left:6px;
+}
+.badge.gray{background:rgba(255,255,255,.2);color:#fff}
+
+/* ---------- стол ---------- */
+#table-screen{
+  background:
+    radial-gradient(ellipse at 50% 40%, #3b6f92 0%, #2f5f80 45%, #24496a 100%);
+  overflow:hidden;position:relative;
+}
+
+/* верхняя панель: ставка */
+.topbar-table{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:6px 12px 2px;flex:none;z-index:5;
+}
+.bet-pill{
+  display:flex;align-items:center;gap:6px;
+  background:rgba(0,0,0,.35);border-radius:16px;padding:5px 12px 5px 8px;
+  font-size:14px;font-weight:700;
+}
+.bet-pill .coin{width:20px;height:20px;border-radius:50%;
+  background:linear-gradient(160deg,#ffe07a,#e0a92c);
+  display:flex;align-items:center;justify-content:center;font-size:11px;color:#6b4a00;
+  box-shadow:0 1px 3px rgba(0,0,0,.4);}
+.bet-pill .lbl{font-size:10px;color:rgba(255,255,255,.6);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.bet-pill .val{color:#ffd964}
+
+/* места игроков */
+.seats{
+  display:flex;flex-wrap:wrap;justify-content:center;gap:10px;padding:4px 10px 0;flex:none;
+}
+.seat{
+  width:78px;text-align:center;position:relative;
+}
+.seat .frame{
+  width:66px;height:66px;border-radius:10px;margin:0 auto;
+  border:3px solid #5c8a3a;background:#2a3b4d;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;position:relative;transition:.2s;
+}
+.seat .frame img{width:100%;height:100%;object-fit:cover}
+.seat .frame .initial{font-size:26px;font-weight:700;color:#fff;opacity:.9}
+.seat.turn .frame{border-color:#b6e04a;box-shadow:0 0 14px rgba(182,224,74,.7)}
+.seat.defender .frame{border-color:#ff5a4d;box-shadow:0 0 14px rgba(255,90,77,.7)}
+.seat.out{opacity:.4}
+.seat .sname{
+  font-size:11px;font-weight:600;margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.seat .scount{
+  position:absolute;top:-6px;right:0;background:#1b2733;color:#ffd964;
+  border-radius:9px;min-width:20px;padding:1px 5px;font-size:12px;font-weight:700;
+  border:1.5px solid rgba(255,255,255,.25);
+}
+.seat .stag{font-size:8px;color:rgba(255,255,255,.55);text-transform:uppercase;letter-spacing:.4px;margin-top:1px}
+
+/* центральное поле */
+.field{
+  flex:1;position:relative;min-height:0;padding:8px;
+  display:flex;align-items:center;justify-content:center;
+}
+
+/* колода слева, отбой справа */
+.piles{
+  position:absolute;left:10px;right:10px;top:0;bottom:0;
+  display:flex;align-items:center;justify-content:space-between;
+  pointer-events:none;
+}
+.pile{position:relative;width:56px;height:78px;pointer-events:auto}
+.pile .mini{
+  position:absolute;inset:0;border-radius:7px;
+  transition:.15s;
+}
+.deck-pile .mini.back-card{
+  background:linear-gradient(135deg,#3f6b8a,#254a63);
+  border:1.5px solid rgba(255,255,255,.35);
+  box-shadow:2px 2px 0 rgba(0,0,0,.25), 3px 3px 0 rgba(255,255,255,.12);
+}
+.deck-pile.empty{opacity:.25}
+/* козырь торчит снизу из-под колоды */
+.deck-pile .trump-card{
+  position:absolute;left:2px;bottom:-16px;
+  width:44px;height:62px;border-radius:6px;
+  background:#f7f4ec;color:#1b2733;
+  display:flex;flex-direction:column;justify-content:space-between;
+  padding:3px 4px;font-weight:700;font-size:12px;line-height:1;
+  box-shadow:0 2px 6px rgba(0,0,0,.45);
+  transform:rotate(-8deg);
+}
+.deck-pile .trump-card .r{font-size:14px}
+.deck-pile .trump-card .bottom{align-self:flex-end;transform:rotate(180deg)}
+.deck-pile .cnt{
+  position:absolute;top:-9px;left:-9px;background:rgba(0,0,0,.55);
+  border-radius:10px;padding:2px 7px;font-size:11px;font-weight:700;color:#ffd964;
+}
+.discard-pile .mini{
+  border:1.5px dashed rgba(255,255,255,.3);
+  background:rgba(255,255,255,.06);
+}
+
+/* зона карт на столе */
+.battlefield{
+  display:flex;flex-wrap:wrap;justify-content:center;align-content:center;
+  gap:6px;max-width:330px;
+}
+.slot{position:relative;width:58px;height:84px}
+.slot .card{position:absolute}
+.slot .atk{top:0;left:0}
+.slot .def{top:8px;left:16px;transform:rotate(5deg)}
+
+/* нижняя панель игрока */
+.player-bar{
+  flex:none;background:rgba(255,255,255,.96);
+  border-radius:18px 18px 0 0;padding:8px 10px 10px;
+  display:flex;align-items:center;gap:8px;
+  box-shadow:0 -3px 16px rgba(0,0,0,.3);
+}
+.avatar-wrap{position:relative;flex:none}
+.avatar-wrap .frame{
+  width:54px;height:54px;border-radius:10px;border:3px solid #5c8a3a;
+  overflow:hidden;background:#2a3b4d;display:flex;align-items:center;justify-content:center;
+}
+.avatar-wrap .frame img{width:100%;height:100%;object-fit:cover}
+.avatar-wrap .frame .initial{font-size:22px;font-weight:700;color:#fff}
+.avatar-wrap .cnt{
+  position:absolute;top:-7px;right:-7px;background:#1b2733;color:#ffd964;
+  border-radius:9px;min-width:19px;padding:1px 5px;font-size:11px;font-weight:700;
+  border:1.5px solid #fff;text-align:center;
+}
+
+/* КНОПКА ОТМЕНЫ — слева от аватарки */
+.undo-btn{
+  width:46px;height:46px;border-radius:12px;flex:none;
+  background:#fff;border:2px solid #d9dde2;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:1px;cursor:pointer;color:#c0392b;transition:.15s;padding:0;
+}
+.undo-btn:active{transform:scale(.93)}
+.undo-btn:disabled{opacity:.32}
+.undo-btn svg{width:22px;height:22px;fill:currentColor}
+.undo-btn .left{font-size:9px;font-weight:700;color:#7a8794;line-height:1}
+
+.bar-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.bar-name{font-size:12px;font-weight:700;color:#1b2733;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-bal{font-size:11px;color:#6b7a88;display:flex;align-items:center;gap:4px}
+.bar-bal .coin-sm{width:12px;height:12px;border-radius:50%;
+  background:linear-gradient(160deg,#ffe07a,#e0a92c);display:inline-block}
+
+.bar-btns{display:flex;gap:6px;flex:none}
+.pill-btn{
+  border:0;border-radius:12px;padding:10px 14px;font-size:14px;font-weight:700;
+  font-family:inherit;cursor:pointer;transition:.15s;
+  display:flex;flex-direction:column;align-items:center;gap:1px;min-width:56px;
+}
+.pill-btn:active{transform:scale(.95)}
+.pill-btn:disabled{opacity:.4}
+.pill-btn svg{width:20px;height:20px;fill:currentColor}
+.pill-btn .sub{font-size:8px;font-weight:600;opacity:.75;text-transform:uppercase;letter-spacing:.3px}
+.pill-btn.take{background:#ffe8e6;color:#c0392b}
+.pill-btn.beat{background:#e3f2fd;color:#1565c0}
+.pill-btn.beat:not(:disabled){box-shadow:0 0 0 2px rgba(21,101,192,.25)}
+.pill-btn.pass{background:#e8f5e9;color:#2e7d32}
+.pill-btn.ready{background:#fff;color:#c0392b;border:2px solid #c0392b;font-size:18px;padding:8px 18px}
+.pill-btn.hint{background:#fff3e0;color:#e65100}
+
+
+/* карта-цель под пальцем */
+.slot.target .atk{
+  box-shadow:0 0 0 3px #b6e04a, 0 0 20px rgba(182,224,74,.9) !important;
+  transform:translateY(-4px) scale(1.04);
+  transition:.12s;
+}
+.slot.invalid .atk{
+  box-shadow:0 0 0 3px #ff5a4d, 0 0 18px rgba(255,90,77,.8) !important;
+  animation:shake .3s;
+}
+@keyframes shake{
+  0%,100%{transform:translateX(0)}
+  25%{transform:translateX(-4px)}
+  75%{transform:translateX(4px)}
+}
+.bar-hint{
+  font-size:10px;line-height:1.25;color:#7a8794;text-align:center;
+  padding:4px 8px;border-radius:8px;background:#f0f4f8;
+  align-self:center;flex:none;
+}
+
+/* карты крупнее на столе, рука на белой панели */
+#table-screen .hand{background:transparent;padding:8px 12px 12px;min-height:96px}
+#table-screen .card{width:56px;height:80px;font-size:14px}
+#table-screen .slot .card{width:54px;height:78px}
+.flying{position:fixed !important;z-index:300;pointer-events:none;margin:0 !important;
+  position:fixed;z-index:300;pointer-events:none;margin:0;
+  transition:transform .28s cubic-bezier(.34,1.2,.64,1), opacity .28s ease;
+  transform:translate(0,0) rotate(0deg);
+  box-shadow:0 12px 28px rgba(0,0,0,.5);
+}
+
+/* пульсация активного игрока */
+@keyframes turnPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(182,224,74,.75), 0 0 12px rgba(182,224,74,.5)}
+  50%    {box-shadow:0 0 0 6px rgba(182,224,74,0), 0 0 22px rgba(182,224,74,.95)}
+}
+@keyframes defendPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(255,90,77,.75), 0 0 12px rgba(255,90,77,.5)}
+  50%    {box-shadow:0 0 0 6px rgba(255,90,77,0), 0 0 22px rgba(255,90,77,.95)}
+}
+.seat.turn .frame{animation:turnPulse 1.6s ease-in-out infinite}
+.seat.defender .frame{animation:defendPulse 1.6s ease-in-out infinite}
+.seat.turn.defender .frame{animation:defendPulse 1.6s ease-in-out infinite}
+
+/* моя аватарка тоже пульсирует, когда мой ход */
+.avatar-wrap.turn .frame{animation:turnPulse 1.6s ease-in-out infinite}
+.avatar-wrap.defend .frame{animation:defendPulse 1.6s ease-in-out infinite}
+
+.drag-ghost{
+  position:fixed;z-index:200;pointer-events:none;opacity:.95;
+  transform:translate(-50%,-50%) scale(1.06) rotate(-3deg);
+  box-shadow:0 10px 26px rgba(0,0,0,.55);
+}
+.hand .card.tapped{transform:translateY(-16px)}
+@keyframes flyIn{
+  from{opacity:0;transform:translateY(28px) scale(.85)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+.slot .card{animation:flyIn .18s ease-out}
+
+/* ---------- карты ---------- */
+.card{
+  width:52px;height:74px;border-radius:7px;background:var(--card);color:var(--ink);
+  display:flex;flex-direction:column;justify-content:space-between;
+  padding:4px 5px;font-weight:700;font-size:13px;line-height:1;
+  box-shadow:0 2px 7px rgba(0,0,0,.35);position:relative;flex:none;
+  transition:transform .12s;
+}
+.card.red{color:var(--red)}
+.card .bottom{align-self:flex-end;transform:rotate(180deg)}
+.card.sel{transform:translateY(-14px);box-shadow:0 0 0 3px var(--gold),0 6px 14px rgba(0,0,0,.5)}
+.card.dim{opacity:.4}
+.card.back{background:linear-gradient(135deg,#3a4a63,#26324a);border:1px solid rgba(255,255,255,.25)}
+
+.hand{
+  display:flex;gap:6px;padding:10px 12px 14px;overflow-x:auto;overflow-y:visible;flex:none;
+  min-height:110px;align-items:flex-end;scrollbar-width:none;
+}
+.hand::-webkit-scrollbar{display:none}
+
+.actions{display:flex;gap:8px;padding:0 12px 10px;flex:none}
+.actions .btn{padding:13px;font-size:15px;border-radius:12px}
+
+.toast{
+  position:fixed;left:50%;bottom:120px;transform:translateX(-50%);
+  background:rgba(0,0,0,.88);color:#fff;padding:10px 18px;border-radius:20px;
+  font-size:13px;z-index:100;opacity:0;transition:.25s;pointer-events:none;max-width:88%;text-align:center;
+}
+.toast.on{opacity:1}
+
+.log{
+  height:52px;overflow-y:auto;font-size:11px;color:var(--dim);
+  padding:4px 14px;flex:none;text-align:center;
+}
+.overlay{
+  position:fixed;inset:0;background:rgba(10,18,26,.9);display:none;
+  align-items:center;justify-content:center;padding:24px;z-index:50;
+}
+.overlay.on{display:flex}
+.overlay-box{background:#243546;border-radius:20px;padding:26px 22px;text-align:center;max-width:320px;width:100%}
+
+.overlay-coins.gain{color:#7bc043}
+.overlay-coins.lose{color:#ff6b5e}
+.over-detail{display:none;text-align:left;margin:0 0 18px;font-size:13px}
+.od-title{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.5);margin-bottom:8px;text-align:center}
+.od-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.08)}
+.od-row:last-child{border-bottom:0}
+.od-place{width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,.12);
+  display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex:none}
+.od-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.od-sum{color:#7bc043;font-weight:700}
+.overlay-box h2{margin:0 0 8px;font-size:22px}
+.overlay-box p{color:var(--dim);font-size:14px;margin:0 0 20px}
+.chev{font-size:11px;color:var(--gold);margin-top:2px}
+.empty-note{text-align:center;color:var(--dim);padding:40px 20px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ========== ПРОФИЛЬ ========== -->
+  <div class="screen on" id="profile-screen">
+    <div class="topbar"><div class="title">Профиль</div></div>
+    <div class="profile-head">
+      <div class="avatar" id="p-avatar">?</div>
+      <div>
+        <div class="pname" id="p-name">Игрок</div>
+        <div class="pstats" id="p-stats">0 побед · 0 поражений</div>
+      </div>
+    </div>
+    <div class="card-list">
+      <div class="menu-item"><span>Победы</span><b id="p-wins">0</b></div>
+      <div class="menu-item"><span>Поражения</span><b id="p-loss">0</b></div>
+      <div class="menu-item"><span>Всего партий</span><b id="p-games">0</b></div>
+      <div class="menu-item"><span>Монеты</span><b id="p-balance" style="color:var(--gold)">2500</b></div>
+      <div class="menu-item"><span>Правила</span><span class="chev">›</span></div>
+    </div>
+  </div>
+
+  <!-- ========== СПИСОК ЛОББИ ========== -->
+  <div class="screen" id="list-screen">
+    <div class="topbar">
+      <div class="title">Открытые столы</div>
+      <button class="back" id="refresh" title="Обновить">⟳</button>
+    </div>
+    <div class="lobby-body" id="rooms"></div>
+  </div>
+
+  <!-- ========== СОЗДАНИЕ ИГРЫ ========== -->
+  <div class="screen" id="create-screen">
+    <div class="topbar">
+      <div class="title">Создать игру</div>
+    </div>
+    <div class="lobby-body">
+
+      <div class="label">Игроки</div>
+      <div class="seg" id="seg-players">
+        <button data-v="2">2</button><button data-v="3">3</button>
+        <button data-v="4">4</button><button data-v="5">5</button>
+        <button data-v="6" class="on">6</button>
+      </div>
+
+      <div class="row" style="margin-top:18px">
+        <div>
+          <div class="label" style="margin-top:0">Колода</div>
+          <div class="seg" id="seg-deck">
+            <button data-v="24">24</button><button data-v="36" class="on">36</button>
+            <button data-v="52">52</button>
+          </div>
+        </div>
+        <div>
+          <div class="label" style="margin-top:0">Скорость</div>
+          <div class="seg" id="seg-speed">
+            <button data-v="fast">▶▶</button><button data-v="normal" class="on">▶</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="label">Режимы игры</div>
+      <div class="mode-grid">
+        <button class="mode on" data-mode="podkid" data-v="all">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 2 12h5v8h10v-8h5z"/></svg>все
+        </button>
+        <button class="mode" data-mode="podkid" data-v="neighbors">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h6v2H4zM4 11h6v2H4zM4 16h6v2H4zM14 6h6v2h-6zM14 11h6v2h-6zM14 16h6v2h-6z"/></svg>соседи
+        </button>
+        <button class="mode" data-mode="cheat" data-v="1">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 2 1 3 1 5v3h12v-3c0-2 1-3 1-5a7 7 0 0 0-7-7zm-2 6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm4 5h-4v-1h4z"/></svg>с шулерами
+        </button>
+        <button class="mode on" data-mode="cheat" data-v="0">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4 6v6c0 5 3.4 9.4 8 10 4.6-.6 8-5 8-10V6z"/></svg>честная
+        </button>
+        <button class="mode" data-mode="transfer" data-v="1">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 7h11V4l5 4-5 4V9H4zm16 10H9v3l-5-4 5-4v3h11z"/></svg>переводной
+        </button>
+        <button class="mode" data-mode="transfer" data-v="0">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2"/></svg>без перевода
+        </button>
+        <button class="mode on" data-mode="lossMode" data-v="classic">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h14v3H5zm0 15h14v3H5zM7 7h10v10H7z"/></svg>классика
+        </button>
+        <button class="mode" data-mode="lossMode" data-v="draw">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="12" r="4"/><circle cx="16" cy="12" r="4"/></svg>ничья
+        </button>
+      </div>
+
+      <div class="label">Ставка</div>
+      <div class="value" id="bet-value">100</div>
+      <input type="range" id="bet-range" min="0" max="2500" step="50" value="100">
+      <div class="ticks"><span>0</span><span>500</span><span>1000</span><span>2500</span></div>
+
+      <div class="label">Пароль на лобби</div>
+      <div class="pill">
+        <span>🔒</span>
+        <input id="password" placeholder="без пароля" maxlength="12" autocomplete="off">
+      </div>
+
+      <div class="label">Возврат карты</div>
+      <div class="pill" style="justify-content:space-between">
+        <span style="font-size:14px">Раз за партию</span>
+        <b style="color:var(--gold)">5</b>
+      </div>
+
+      <div style="height:22px"></div>
+      <button class="btn btn-primary" id="do-create">Создать ▶</button>
+    </div>
+  </div>
+
+  <!-- ========== ЛОББИ (ожидание) ========== -->
+  <div class="screen" id="room-screen">
+    <div class="topbar">
+      <button class="back" id="leave-room">←</button>
+      <div class="title" id="room-title">Лобби</div>
+      <button class="back" id="copy-room">⧉</button>
+    </div>
+    <div class="lobby-body">
+      <div class="label">Игроки</div>
+      <div id="room-players"></div>
+      <div class="label">Настройки</div>
+      <div id="room-opts" style="font-size:13px;color:var(--dim);line-height:1.9"></div>
+      <div style="height:24px"></div>
+      <button class="btn btn-primary" id="start-game">Начать игру</button>
+    </div>
+  </div>
+
+  <!-- ========== СТОЛ ========== -->
+  <div class="screen" id="table-screen">
+
+    <!-- верх: ставка -->
+    <div class="topbar-table">
+      <div class="bet-pill" id="bet-pill">
+        <span class="coin">◈</span>
+        <span class="lbl">ставка</span>
+        <span class="val" id="bet-val">0</span>
+      </div>
+      <div class="bet-pill">
+        <span class="coin">◈</span>
+        <span class="val" id="my-balance">0</span>
+      </div>
+    </div>
+
+    <!-- места соперников -->
+    <div class="seats" id="seats"></div>
+
+    <!-- поле: колода слева, отбой справа -->
+    <div class="field">
+      <div class="piles">
+        <div class="pile deck-pile" id="deck-pile">
+          <div class="mini back-card"></div>
+          <div class="trump-card" id="trump-card">
+            <span class="r" id="trump-rank">6</span>
+            <span class="bottom" id="trump-suit">♠</span>
+          </div>
+          <div class="cnt" id="deck-count">0</div>
+        </div>
+        <div class="pile discard-pile" id="discard-pile">
+          <div class="mini"></div>
+          <div class="cnt" id="discard-count">0</div>
+        </div>
+      </div>
+      <div class="battlefield" id="battlefield"></div>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <!-- нижняя панель: отмена слева от аватарки -->
+    <div class="player-bar">
+      <button class="undo-btn" id="undo-btn" disabled title="Отменить последнюю карту">
+        <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>
+        <span class="left" id="undo-left">5</span>
+      </button>
+
+      <div class="avatar-wrap">
+        <div class="frame" id="my-avatar"><span class="initial">?</span></div>
+        <div class="cnt" id="my-count">6</div>
+      </div>
+
+      <div class="bar-info">
+        <div class="bar-name" id="my-name">Игрок</div>
+        <div class="bar-bal"><span class="coin-sm"></span><span id="my-balance-2">2500</span></div>
+      </div>
+
+      <div class="bar-btns" id="bar-btns"></div>
+    </div>
+
+    <div class="hand" id="hand"></div>
+  </div>
+
+  <!-- ========== НИЖНЯЯ НАВИГАЦИЯ ========== -->
+  <div class="tabs" id="tabs">
+    <button data-tab="profile" class="on">
+      <svg viewBox="0 0 24 24"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0 2c-5 0-9 2.5-9 5.5V22h18v-2.5c0-3-4-5.5-9-5.5z"/></svg>Профиль
+    </button>
+    <button data-tab="list">
+      <svg viewBox="0 0 24 24"><path d="M12 21s-8-5-8-10a5 5 0 0 1 8-4 5 5 0 0 1 8 4c0 5-8 10-8 10z"/></svg>Открытые
+    </button>
+    <button data-tab="create">
+      <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>Создать игру
+    </button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="overlay" id="overlay">
+  <div class="overlay-box">
+    <h2 id="over-title">Игра окончена</h2>
+    <p id="over-text"></p>
+    <button class="btn btn-primary" id="over-close">В лобби</button>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
