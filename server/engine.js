@@ -36,7 +36,7 @@ export class Durak {
     this.trump = this.trumpCard.s;
 
     this.players = this.opts.players.map((p, i) => ({
-      id: p.id, name: p.name, idx: i,
+      id: p.id, name: p.name, photo: p.photo || null, idx: i,
       hand: [],
       out: false,
       cheatsLocked: false,      // заблокирован до конца партии (или кона)
@@ -64,6 +64,10 @@ export class Durak {
     this.createdAt = Date.now();
     this.stallBouts = 0;              // кóнов подряд без прогресса (отбоя)
     this.lastDiscardCount = 0;
+
+    // ---- фаза "беру": защитник сказал «беру», остальные могут подкинуть и нажать пас ----
+    this.takePending = null;          // { defenderIdx, passed: Set<playerId> } или null
+    this.surrendered = [];            // кто вышел из партии добровольно
 
     this.pushLog(`Козырь: ${label(this.trumpCard)}. Первым ходит ${this.player(this.attackerIdx).name}`);
     this.refillHands();
@@ -137,7 +141,7 @@ export class Durak {
   // Карта, которую этот игрок может вернуть прямо сейчас (последняя на столе и своя)
   recallableFor(idx) {
     if (this.phase === 'over' || !this.table.length) return null;
-    if (this.pendingCheat) return null;
+    if (this.pendingCheat || this.takePending) return null;
     const p = this.players[idx];
     if (!p || p.recallsLeft <= 0) return null;
     const slot = this.table[this.table.length - 1];
@@ -162,10 +166,12 @@ export class Durak {
       defenderId: this.players[this.defenderIdx]?.id,
       players: this.players.map(p => ({
         id: p.id, name: p.name, idx: p.idx,
+        photo: p.photo || null,
         count: p.hand.length, out: p.out,
         hand: p.id === forPlayerId ? sortHand(p.hand, this.trump) : null,
         cheatsLocked: p.cheatsLocked,
-        recallsLeft: p.recallsLeft
+        recallsLeft: p.recallsLeft,
+        passed: this.takePending ? this.takePending.passed.has(p.id) : false
       })),
       you: me ? {
         id: me.id,
@@ -174,7 +180,16 @@ export class Durak {
         isDefender: me.idx === this.defenderIdx,
         recallsLeft: me.recallsLeft,
         recallable: this.recallableFor(me.idx),
-        cheatsLocked: me.cheatsLocked
+        cheatsLocked: me.cheatsLocked,
+        passed: this.takePending ? this.takePending.passed.has(me.id) : false,
+        canConfirmTake: this.canConfirmTake(me.id)
+      } : null,
+      takePhase: this.takePending ? {
+        active: true,
+        defenderId: this.players[this.takePending.defenderIdx].id,
+        waitingFor: this.waitingPassers().map(x => x.name),
+        allPassed: this.allPassed(),
+        maxCards: this.podkidLimitInTake()
       } : null,
       losers: this.losers,
       exitOrder: this.exitOrder,
@@ -205,6 +220,17 @@ export class Durak {
       if (idx !== this.attackerIdx) return { ok: false, why: 'Первым ходит атакующий' };
       return { ok: true };
     }
+
+    // в фазе «беру» свой лимит: не больше карт в руке защитника
+    if (this.takePending) {
+      if (this.table.length >= this.podkidLimitInTake()) {
+        const cnt = this.players[this.takePending.defenderIdx].hand.length;
+        return { ok: false, why: `Больше нельзя: у защитника всего ${cnt} карт` };
+      }
+      if (!this.tableRanks().has(card.r))
+        return { ok: false, why: 'Нужен ранг, который уже есть на столе' };
+      return { ok: true };
+    }
     const d = this.players[this.defenderIdx];
     const undefended = this.table.filter(s => !s.defense).length;
     if (this.table.length >= MAX_ATTACKS) return { ok: false, why: 'На столе уже 6 карт' };
@@ -221,6 +247,17 @@ export class Durak {
     return beats(card, attackCard, this.trump);
   }
 
+  // Может ли этот игрок вообще ходить (атаковать/подкидывать) в текущем состоянии
+  mayAttack(idx) {
+    const p = this.players[idx];
+    if (!p || p.out) return false;
+    if (idx === this.defenderIdx) return false;
+    if (this.phase !== 'attack' && this.phase !== 'defend' && this.phase !== 'take') return false;
+    if (idx === this.attackerIdx) return true;
+    if (this.opts.podkid === 'all') return true;
+    return this.isNeighborOfDefender(idx);
+  }
+
   // ---------- действия ----------
 
   // Атака / подкидывание
@@ -231,6 +268,10 @@ export class Durak {
     if (!p) return { ok: false, why: 'Нет игрока' };
     const card = p.hand.find(c => c.id === cardId);
     if (!card) return { ok: false, why: 'Нет такой карты в руке' };
+
+    // в фазе беру нельзя подкидывать тому, кто уже сказал «пас»
+    if (this.takePending && this.takePending.passed.has(p.id))
+      return { ok: false, why: 'Вы уже сказали пас' };
 
     const chk = this.canAttackWith(idx, card);
     const cheating = !chk.ok;
@@ -335,10 +376,14 @@ export class Durak {
 
   // Все отбились -> бито
   endBout(playerId) {
+    if (this.takePending) return { ok: false, why: 'Идёт подкидывание — защитник ещё не забрал' };
     if (this.phase !== 'defend' && this.phase !== 'attack') return { ok: false, why: 'Нечего завершать' };
     const idx = this.idxOf(playerId);
-    if (idx !== this.attackerIdx && idx !== this.defenderIdx)
-      return { ok: false, why: 'Завершать кон может только атакующий или защищающийся' };
+    // защитник НЕ отправляет карты в отбой — это делает только атакующая сторона
+    if (idx === this.defenderIdx)
+      return { ok: false, why: 'Карты в отбой отправляет атакующий, а не защищающийся' };
+    if (!this.mayAttack(idx))
+      return { ok: false, why: 'Завершать кон может только атакующая сторона' };
     if (this.table.some(s => !s.defense))
       return { ok: false, why: 'Есть неотбитые карты' };
     if (this.pendingCheat) return { ok: false, why: 'Сначала решите спор о шулерстве' };
@@ -351,24 +396,107 @@ export class Durak {
   }
 
   // Защищающийся забирает
+  // Защитник говорит «беру» — карты остаются на столе, остальные могут подкинуть
   takeCards(playerId) {
-    if (this.phase !== 'defend') return { ok: false, why: 'Сейчас не защита' };
+    if (this.phase !== 'defend' && this.phase !== 'take') return { ok: false, why: 'Сейчас не защита' };
+    if (this.takePending) return { ok: false, why: 'Вы уже взяли — ждём подкидывания' };
     const idx = this.idxOf(playerId);
     if (idx !== this.defenderIdx) return { ok: false, why: 'Взять может только защищающийся' };
     if (this.pendingCheat) return { ok: false, why: 'Сначала решите спор о шулерстве' };
+    if (!this.table.length) return { ok: false, why: 'На столе нет карт' };
+
+    this.takePending = { defenderIdx: idx, passed: new Set() };
+    this.phase = 'take';
+
+    if (this.waitingPassers().length === 0) {
+      this.pushLog(`${this.players[idx].name} не стал отбиваться`);
+      return { ok: true, allPassed: true };
+    }
+    this.pushLog(`${this.players[idx].name} берёт. Остальные могут подкинуть карты`);
+    return { ok: true };
+  }
+
+  // Кто ещё не сказал «пас» в фазе беру
+  waitingPassers() {
+    if (!this.takePending) return [];
+    return this.players.filter(x =>
+      x.idx !== this.takePending.defenderIdx && !x.out && !this.takePending.passed.has(x.id));
+  }
+
+  allPassed() {
+    return !!this.takePending && this.waitingPassers().length === 0;
+  }
+
+  // Лимит карт на столе в фазе беру: не больше, чем карт в руке защитника
+  podkidLimitInTake() {
+    if (!this.takePending) return 0;
+    const d = this.players[this.takePending.defenderIdx];
+    return Math.min(MAX_ATTACKS, d.hand.length);
+  }
+
+  // «Забрать» доступно защитнику только когда все остальные сказали «пас»
+  canConfirmTake(playerId) {
+    if (!this.takePending) return false;
+    const idx = this.idxOf(playerId);
+    return idx === this.takePending.defenderIdx && this.allPassed();
+  }
+
+  // Игрок сказал «пас» в фазе беру
+  passPodkid(playerId) {
+    if (!this.takePending) return { ok: false, why: 'Сейчас нечего подкидывать' };
+    const p = this.playerById(playerId);
+    if (!p) return { ok: false, why: 'Нет игрока' };
+    if (p.idx === this.takePending.defenderIdx)
+      return { ok: false, why: 'Защитник не пасует — он забирает' };
+    if (this.takePending.passed.has(p.id))
+      return { ok: false, why: 'Вы уже сказали пас' };
+
+    this.takePending.passed.add(p.id);
+    this.pushLog(`${p.name}: пас`);
+
+    if (this.allPassed()) this.pushLog('Все сказали пас — защитник может забрать карты');
+    return { ok: true, allPassed: this.allPassed() };
+  }
+
+  // Защитник окончательно забирает карты
+  confirmTake(playerId) {
+    if (!this.takePending) return { ok: false, why: 'Вы не брали карты' };
+    const idx = this.idxOf(playerId);
+    if (idx !== this.takePending.defenderIdx)
+      return { ok: false, why: 'Забрать может только защищающийся' };
+    if (!this.allPassed())
+      return { ok: false, why: 'Дождитесь, пока остальные скажут пас' };
 
     const d = this.players[idx];
-    const cards = this.table.flatMap(s => [s.attack, s.defense]).filter(Boolean);
+    const cards = this.table.flatMap(sl => [sl.attack, sl.defense]).filter(Boolean);
     d.hand.push(...cards);
     this.pushLog(`${d.name} забирает ${cards.length} карт`);
     this.table = [];
+    this.takePending = null;
+    this.phase = 'defend';
     this.refillHands();
     this.afterBout(idx, true);
     return { ok: true };
   }
 
+  // Выход из партии добровольно — засчитывается поражение
+  surrender(playerId) {
+    const p = this.playerById(playerId);
+    if (!p) return { ok: false, why: 'Нет игрока' };
+    if (this.phase === 'over') return { ok: false, why: 'Партия уже окончена' };
+    if (p.out) return { ok: false, why: 'Вы уже вышли' };
+
+    this.surrendered.push(p.id);
+    this.losers = [...new Set([...this.losers, p.id])];
+    this.pushLog(`${p.name} вышел из партии — засчитано поражение`);
+    this.markOut(p);
+    this.phase = 'over';
+    return { ok: true };
+  }
+
   afterBout(takerIdx, took) {
     // добор до 6 — до расчёта следующего атакующего
+    this.takePending = null;
     this.refillHands();
 
     // следующий атакующий; если он вышел из игры — берём следующего активного
@@ -470,6 +598,7 @@ export class Durak {
     if (p.recallsLeft <= 0) return { ok: false, why: 'Возвраты закончились' };
     if (this.pendingCheat) return { ok: false, why: 'Сначала решите спор о шулерстве' };
     if (this.phase === 'over') return { ok: false, why: 'Партия окончена' };
+    if (this.takePending) return { ok: false, why: 'В фазе беру карты уже не возвращают' };
     if (this.table.length === 0) return { ok: false, why: 'Стол пуст' };
 
     const i = this.table.length - 1;

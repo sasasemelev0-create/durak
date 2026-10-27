@@ -154,42 +154,45 @@ function handle(ws, msg) {
       broadcastLobbies();
       return;
     }
-    case 'start': {
+    case 'ready': {
+      // Игрок нажал «Готов». Когда готовы все — партия стартует сама.
       const me = requireAuth(ws); if (!me) return;
       const room = rooms.get(clientRoom.get(me.id));
       if (!room) return send(ws, { t: 'error', why: 'Вы не в лобби' });
-      if (room.hostId !== me.id) return send(ws, { t: 'error', why: 'Начинает только хост' });
-      if (room.players.length < 2) return send(ws, { t: 'error', why: 'Нужно минимум 2 игрока' });
+      if (room.game && room.game.phase !== 'over')
+        return send(ws, { t: 'error', why: 'Партия уже идёт' });
 
-      // ---- ставка: проверяем у всех и блокируем ----
-      const bet = room.opts.bet || 0;
-      if (bet > 0) {
-        for (const p of room.players) {
-          if (!profiles.canBet(p.id, bet)) {
-            return send(ws, { t: 'error', why: `У ${p.name} не хватает монет на ставку ${bet}` });
-          }
-        }
-        for (const p of room.players) profiles.lockBet(p.id, bet);
+      // новый раунд после завершённой партии — чистим прошлый стол
+      if (room.game && room.game.phase === 'over') {
+        room.game = null;
+        room.scored = false;
+        room.payouts = null;
+        room.payoutDetail = null;
+        room.readySet = new Set();
       }
-      room.betLocked = bet;
 
-      try {
-        room.game = new Durak({
-          players: room.players.map(p => ({ id: p.id, name: p.name })),
-          deckSize: room.opts.deckSize,
-          podkid: room.opts.podkid,
-          transfer: room.opts.transfer,
-          cheat: room.opts.cheat,
-          lossMode: room.opts.lossMode,
-          seed: crypto.randomInt(1e9)
-        });
-      } catch (e) {
-        // если партия не создалась — вернуть ставки
-        for (const p of room.players) profiles.refundBet(p.id);
-        room.betLocked = 0;
-        return send(ws, { t: 'error', why: e.message });
+      if (!room.readySet.has(me.id)) room.readySet.add(me.id);
+      else room.readySet.delete(me.id);   // повторное нажатие — отменить готовность
+
+      tryStartRoom(room);
+      broadcastRoom(room);
+      broadcastLobbies();
+      return;
+    }
+    case 'surrender': {
+      // Выход из партии — засчитывается поражение
+      const me = requireAuth(ws); if (!me) return;
+      const room = rooms.get(clientRoom.get(me.id));
+      if (!room || !room.game) return send(ws, { t: 'error', why: 'Нет игры' });
+      if (room.game.phase === 'over') return send(ws, { t: 'error', why: 'Партия окончена' });
+
+      const res = room.game.surrender(me.id);
+      if (!res.ok) return send(ws, { t: 'error', why: res.why });
+
+      if (room.game.phase === 'over' && !room.scored) {
+        room.scored = true;
+        settleRoom(room, room.game);
       }
-      room.startedAt = Date.now();
       broadcastRoom(room);
       return;
     }
@@ -207,6 +210,8 @@ function handle(ws, msg) {
         case 'transfer': res = g.transfer(me.id, msg.cardId); break;
         case 'endBout': res = g.endBout(me.id); break;
         case 'take': res = g.takeCards(me.id); break;
+        case 'passPodkid': res = g.passPodkid(me.id); break;
+        case 'confirmTake': res = g.confirmTake(me.id); break;
         case 'recall': res = g.recall(me.id, msg.cardId); break;
         case 'accuse': res = g.accuse(me.id, msg.targetId); break;
         default: res = { ok: false, why: 'Неизвестное действие' };
@@ -221,6 +226,60 @@ function handle(ws, msg) {
     }
     case 'ping': send(ws, { t: 'pong' }); return;
   }
+}
+
+// Партия стартует, когда готовы ВСЕ игроки в лобби
+function tryStartRoom(room) {
+  if (room.game && room.game.phase !== 'over') return false;
+  if (room.players.length < 2) return false;
+  if (room.readySet.size < room.players.length) return false;
+
+  const bet = room.opts.bet || 0;
+  if (bet > 0) {
+    const poor = room.players.filter(p => !profiles.canBet(p.id, bet));
+    if (poor.length) {
+      // не хватает денег — снимаем готовность и сообщаем всем
+      room.readySet.delete(poor[0].id);
+      for (const sock of roomSockets(room))
+        send(sock, { t: 'error', why: `У ${poor[0].name} не хватает монет на ставку ${bet}` });
+      return false;
+    }
+    for (const p of room.players) profiles.lockBet(p.id, bet);
+  }
+  room.betLocked = bet;
+
+  try {
+    room.game = new Durak({
+      players: room.players.map(p => ({ id: p.id, name: p.name, photo: p.photo })),
+      deckSize: room.opts.deckSize,
+      podkid: room.opts.podkid,
+      transfer: room.opts.transfer,
+      cheat: room.opts.cheat,
+      lossMode: room.opts.lossMode,
+      seed: crypto.randomInt(1e9)
+    });
+  } catch (e) {
+    for (const p of room.players) profiles.refundBet(p.id);
+    room.betLocked = 0;
+    for (const sock of roomSockets(room)) send(sock, { t: 'error', why: e.message });
+    return false;
+  }
+
+  room.startedAt = Date.now();
+  room.scored = false;
+  room.payouts = null;
+  room.payoutDetail = null;
+  room.readySet = new Set();
+  return true;
+}
+
+function roomSockets(room) {
+  const list = [];
+  for (const p of room.players) {
+    const s = sockets.get(p.id);
+    if (s) list.push(s);
+  }
+  return list;
 }
 
 function requireAuth(ws) {
@@ -302,6 +361,8 @@ function createRoom(host, opts, password) {
     spectators: [],
     game: null,
     scored: false,
+    readySet: new Set(),      // кто нажал «Готов» перед партией
+    lastResult: null,         // итог прошлой партии — для экрана и реванша
     presence: {},
     createdAt: Date.now(),
     opts: {
@@ -324,7 +385,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 function joinRoom(room, playerId) {
   if (!room.players.some(p => p.id === playerId)) {
     const prof = profiles.get(playerId);
-    room.players.push({ id: playerId, name: prof.name, photo: prof.photo });
+    room.players.push({ id: playerId, name: prof.name, photo: prof.photo, ready: false });
     room.presence[playerId] = true;
   }
   clientRoom.set(playerId, room.id);
@@ -361,7 +422,9 @@ function roomPublic(room) {
     cheat: room.opts.cheat,
     lossMode: room.opts.lossMode,
     bet: room.opts.bet || 0,
-    inGame: !!(room.game && room.game.phase !== 'over')
+    ready: room.readySet ? room.readySet.size : 0,
+    inGame: !!(room.game && room.game.phase !== 'over'),
+    isOver: !!(room.game && room.game.phase === 'over')
   };
 }
 
@@ -371,8 +434,11 @@ function roomStateFor(room, playerId) {
     room: roomPublic(room),
     me: playerId,
     hostId: room.hostId,
+    readyCount: room.readySet ? room.readySet.size : 0,
     players: room.players.map(p => ({
       ...p,
+      ready: room.readySet ? room.readySet.has(p.id) : false,
+      coins: profiles.public(p.id)?.balance ?? 0,
       online: room.presence[p.id] !== false,
       profile: profiles.public(p.id)
     })),

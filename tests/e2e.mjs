@@ -48,7 +48,7 @@ function client(id, name) {
 
 const srv = spawn('node', ['server/index.js'], {
   env: { ...process.env, PORT: String(PORT), BOT_TOKEN: '' },
-  cwd: '/home/user/durak',
+  cwd: '/home/user/durak-v4',
   stdio: ['ignore', 'pipe', 'pipe']
 });
 srv.stderr.on('data', d => process.stderr.write('[srv] ' + d));
@@ -97,11 +97,16 @@ try {
 
   // ---------- старт ----------
   console.log('\nСтарт партии');
-  B.send({ t: 'start' });   // не хост
-  const errHost = await B.waitFor(m => m.t === 'error' && /хост/i.test(m.why));
-  ok(!!errHost, 'начинает только хост');
+  // раньше стартовал хост — теперь партия начинается, когда готовы все
+  A.send({ t: 'ready' });
+  await sleep(300);
+  ok(A.last(m => m.t === 'room')?.game === null, 'один готов — партия ещё не началась');
 
-  A.send({ t: 'start' });
+  B.send({ t: 'ready' });
+  await sleep(700);
+  console.log('   DEBUG readyCount=', A.last(m => m.t === 'room')?.readyCount,
+    'players=', A.last(m => m.t === 'room')?.players?.map(p => p.id + ':' + p.ready).join(','),
+    'game=', !!A.last(m => m.t === 'room')?.game);
   const started = await A.waitFor(m => m.t === 'room' && m.game && m.game.phase !== 'over');
   ok(!!started.game, 'партия началась');
   ok(started.game.players.every(p => p.count === 6), 'по 6 карт');
@@ -154,7 +159,17 @@ try {
   attacker.send({ t: 'act', action: 'attack', cardId: card.id });
   await attacker.waitFor(m => m.t === 'room' && m.game?.table?.length === 1);
   defender.send({ t: 'act', action: 'take' });
-  const afterTake = await defender.waitFor(m => m.t === 'room' && m.game?.table?.length === 0 && m.game?.you?.hand?.length >= 7);
+  const inTake = await defender.waitFor(m => m.t === 'room' && m.game?.takePhase?.active);
+  ok(!!inTake.game.takePhase, 'защитник сказал «беру» — началась фаза подкидывания');
+
+  // атакующий пасует
+  attacker.send({ t: 'act', action: 'passPodkid' });
+  const allPassed = await defender.waitFor(m => m.t === 'room' && m.game?.takePhase?.allPassed);
+  ok(allPassed.game.you.canConfirmTake, 'после паса защитник может забрать карты');
+
+  // защитник забирает
+  defender.send({ t: 'act', action: 'confirmTake' });
+  const afterTake = await defender.waitFor(m => m.t === 'room' && m.game?.phase !== 'take' && m.game?.you?.hand?.length >= 7);
   ok(afterTake.game.you.hand.length >= 7, 'защищающийся забрал карты', String(afterTake.game.you.hand.length));
 
   // ---------- доигрываем до конца ----------
@@ -167,6 +182,16 @@ try {
       const st = all[cid].last(m => m.t === 'room' && m.game)?.game;
       if (!st) continue;
       if (st.phase === 'over') { over = true; break; }
+
+      // фаза «беру»: пасуют все кроме защитника, защитник забирает
+      if (st.takePhase?.active) {
+        if (st.you.isDefender) {
+          if (st.you.canConfirmTake) { all[cid].send({ t: 'act', action: 'confirmTake' }); actedAny = true; }
+        } else if (!st.you.passed) {
+          all[cid].send({ t: 'act', action: 'passPodkid' }); actedAny = true;
+        }
+        continue;
+      }
       if (st.attackerId !== cid && st.defenderId !== cid) continue;
 
       if (st.defenderId === cid) {
@@ -178,9 +203,6 @@ try {
             : (c.s === st.trump && slot.attack.s !== st.trump));
           if (beat) all[cid].send({ t: 'act', action: 'defend', cardId: beat.id });
           else all[cid].send({ t: 'act', action: 'take' });
-          actedAny = true;
-        } else if (st.table.length && st.table.every(s => s.defense)) {
-          all[cid].send({ t: 'act', action: 'endBout' });
           actedAny = true;
         }
       } else {

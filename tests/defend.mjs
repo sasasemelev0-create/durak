@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 const PORT=3145, sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let pass=0, fail=0; const ok=(c,n,e='')=>{c?(pass++,console.log('  ✓ '+n)):(fail++,console.log('  ✗ '+n+(e?' — '+e:'')));};
-const srv=spawn('node',['server/index.js'],{env:{...process.env,PORT:String(PORT),BOT_TOKEN:''},cwd:'/home/user/durak',stdio:['ignore','ignore','pipe']});
+const srv=spawn('node',['server/index.js'],{env:{...process.env,PORT:String(PORT),BOT_TOKEN:''},cwd:'/home/user/durak-v4',stdio:['ignore','ignore','pipe']});
 await sleep(1000);
 const browser=await chromium.launch();
 const mk=async(id)=>{const c=await browser.newContext({viewport:{width:400,height:860},hasTouch:true,isMobile:true});const p=await c.newPage();
@@ -15,7 +15,8 @@ try{
   await p1.click('#do-create'); await sleep(600);
   await p2.click('button[data-tab="list"]'); await sleep(400);
   await p2.click('.room'); await sleep(500);
-  await p1.click('#start-game'); await sleep(900);
+  await p1.click('#start-game'); await sleep(200);
+  await p2.click('#start-game'); await sleep(1100);
 
   // определяем атакующего/защитника по кнопкам
   const isDef = async p => /Беру/.test(await p.locator('#bar-btns').textContent());

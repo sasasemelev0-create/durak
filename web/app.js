@@ -212,7 +212,7 @@ $('copy-room').addEventListener('click', () => {
   navigator.clipboard?.writeText(id).then(() => toast('Код лобби скопирован: ' + id));
 });
 
-$('start-game').addEventListener('click', () => send({ t: 'start' }));
+$('start-game').addEventListener('click', () => send({ t: 'ready' }));
 
 function renderRoom(m) {
   if (!m) return;
@@ -226,6 +226,7 @@ function renderRoom(m) {
           ${esc(p.name)} ${p.id === m.hostId ? '<span class="badge">хост</span>' : ''}
           ${p.id === m.me ? '<span class="badge gray">вы</span>' : ''}
           ${p.online ? '' : '<span class="badge gray">офлайн</span>'}
+          ${p.ready ? '<span class="badge">готов ✓</span>' : ''}
         </div>
         <div class="room-meta">${p.profile ? `${p.profile.wins}П / ${p.profile.losses}Пр` : ''}</div>
       </div>
@@ -242,12 +243,22 @@ function renderRoom(m) {
     Ставка: <b style="color:var(--gold)">${r.bet || 0}</b> · Ваш баланс: <b style="color:var(--gold)">${state.me?.balance ?? 0}</b>`;
 
   const isHost = m.hostId === m.me;
+  // кнопка «Готов» видна всем
   const btn = $('start-game');
-  btn.style.display = isHost ? 'block' : 'none';
-  // хост может начать с любым числом игроков от 2 — иначе лобби на 6 навсегда застрянет
-  btn.disabled = m.players.length < 2 || r.inGame;
-  btn.textContent = r.inGame ? 'Игра идёт…'
-    : (m.players.length === r.maxPlayers ? 'Начать игру' : `Начать игру (${m.players.length}/${r.maxPlayers})`);
+  const meP = m.players.find(p => p.id === m.me);
+  const iAmReady = !!meP?.ready;
+  btn.style.display = 'block';
+  btn.disabled = m.players.length < 2;
+  btn.textContent = iAmReady ? 'Вы готовы ✓' : 'Готов';
+  btn.style.background = iAmReady
+    ? 'linear-gradient(180deg,#7bc043,#5aa32e)'
+    : 'linear-gradient(180deg,#fff,#e9e4d8)';
+  btn.style.color = iAmReady ? '#fff' : '#7a2f2b';
+
+  const readyCount = m.players.filter(p => p.ready).length;
+  $('ready-hint').textContent = m.players.length < 2
+    ? 'Нужно минимум 2 игрока'
+    : `Готовы: ${readyCount} из ${m.players.length}. Партия начнётся, когда готовы все`;
 
   // переход к столу
   if (m.game && m.game.phase !== 'over') {
@@ -333,9 +344,10 @@ function renderTable(g) {
   // ---- места соперников (все, кроме меня) ----
   const others = g.players.filter(p => p.id !== me?.id);
   $('seats').innerHTML = others.map(p => {
-    const tag = p.id === g.attackerId ? 'атакует'
-      : p.id === g.defenderId ? 'защита'
-      : p.out ? 'вышел' : '';
+    const tag = p.out ? 'вышел'
+      : p.passed ? 'пас'
+      : p.id === g.attackerId ? 'атакует'
+      : p.id === g.defenderId ? 'защита' : '';
     const photo = p.photo
       ? `<img src="${esc(p.photo)}" alt="" onerror="this.style.display='none'">`
       : `<span class="initial">${esc((p.name || '?')[0].toUpperCase())}</span>`;
@@ -344,6 +356,7 @@ function renderTable(g) {
       <div class="scount">${p.count}</div>
       <div class="sname">${esc(p.name)}</div>
       <div class="stag">${tag || '&nbsp;'}</div>
+      ${p.passed ? '<div class="passed-tag">ПАС</div>' : ''}
     </div>`;
   }).join('');
 
@@ -404,20 +417,62 @@ function renderTable(g) {
     state.pendingFrom = null;
   }
 
+  // ---- баннер фазы «беру» ----
+  const banner = $('take-banner');
+  if (g.takePhase?.active) {
+    const waiting = g.takePhase.waitingFor || [];
+    const defName = g.players.find(x => x.id === g.takePhase.defenderId)?.name || '';
+    if (g.takePhase.allPassed) {
+      banner.innerHTML = g.you?.canConfirmTake
+        ? 'Все сказали <b>пас</b> — забирайте карты'
+        : `Ждём, пока <b>${esc(defName)}</b> заберёт карты`;
+    } else if (g.you?.isDefender) {
+      banner.innerHTML = `Вы берёте. Ждём подкидывания:<br><b>${esc(waiting.join(', '))}</b>`;
+    } else {
+      banner.innerHTML = `<b>${esc(defName)}</b> берёт карты.<br>Можно подкинуть ещё или нажать <b>пас</b>`;
+    }
+    banner.classList.remove('hide');
+  } else {
+    banner.classList.add('hide');
+  }
+
   // ---- журнал ----
   $('log').innerHTML = (g.log || []).slice(-3).map(l => esc(l.text)).join('<br>');
 
   // ---- рука с жестами ----
   const hand = $('hand');
   hand.innerHTML = '';
-  (me?.hand || []).forEach(c => {
+  const cards = me?.hand || [];
+  cards.forEach(c => {
     const el = cardEl(c, { selected: state.selected === c.id });
     el.classList.add('in-hand');
     attachGesture(el, c, g);
     hand.appendChild(el);
   });
+  layoutHand(hand, cards.length);
 
   renderBar(g);
+}
+
+// Раскладка руки: чем больше карт, тем сильнее они налезают друг на друга,
+// но угол с рангом и мастью всегда остаётся виден
+function layoutHand(handEl, count) {
+  if (!count) return;
+  const CARD_W = 58;
+  const CORNER = 22;            // сколько должно остаться видимым у каждой карты
+  const av = handEl.clientWidth || window.innerWidth - 20;
+  const padding = 20;
+  const usable = av - padding;
+
+  // сколько нужно места, если не налезать вовсе
+  const full = count * CARD_W;
+  let overlap = 0;
+  if (full > usable) {
+    // сдвиг на каждую следующую карту
+    const needed = (full - usable) / (count - 1);
+    overlap = Math.min(CARD_W - CORNER, needed);
+  }
+  handEl.style.setProperty('--overlap', `-${Math.round(overlap)}px`);
 }
 
 // Кнопки в нижней панели
@@ -437,6 +492,7 @@ function renderBar(g) {
   const table = g.table || [];
   const undefended = table.filter(s => !s.defense);
   const hasSelection = !!state.selected;
+  const takePhase = g.takePhase?.active;
 
   const addBtn = (cls, label, sub, icon, fn, disabled = false) => {
     const b = document.createElement('button');
@@ -448,8 +504,43 @@ function renderBar(g) {
     return b;
   };
 
+  // ================= фаза «беру» =================
+  if (takePhase) {
+    if (me.isDefender) {
+      // защитник ждёт всех, потом забирает
+      addBtn('take', 'Забрать', g.you.canConfirmTake ? 'готово' : 'ждём', ICONS.take, () => {
+        send({ t: 'act', action: 'confirmTake' });
+      }, !g.you.canConfirmTake);
+      return;
+    }
+
+    // остальные подкидывают или пасуют
+    if (me.passed) {
+      const hint = document.createElement('div');
+      hint.className = 'bar-hint';
+      hint.innerHTML = 'Вы сказали <b>пас</b><br>ждём остальных';
+      box.appendChild(hint);
+      return;
+    }
+
+    // можно ли ещё подкинуть
+    const atLimit = table.length >= (g.takePhase.maxCards || 6);
+    addBtn('ready', 'Подкинуть', 'карту', ICONS.ready, () => {
+      if (!state.selected) return toast('Выберите карту или перетащите её на стол');
+      send({ t: 'act', action: 'attack', cardId: state.selected, cheat: !!g.opts?.cheat });
+      state.selected = null;
+    }, !hasSelection || atLimit);
+
+    addBtn('pass', 'Пас', 'больше нет', ICONS.pass, () => {
+      send({ t: 'act', action: 'passPodkid' });
+      state.selected = null;
+    });
+    return;
+  }
+
+  // ================= обычная фаза =================
   if (me.isDefender) {
-    // перевод, если разрешён и пока ничего не отбито
+    // перевод возможен, только пока ничего не отбито
     if (g.opts?.transfer && table.length > 0 && undefended.length === table.length) {
       addBtn('hint', 'Перевод', 'картой', ICONS.transfer, () => {
         if (!state.selected) return toast('Выберите карту того же ранга');
@@ -458,7 +549,6 @@ function renderBar(g) {
       }, !hasSelection);
     }
 
-    // подсказка вместо кнопки «Бить»
     if (undefended.length > 0) {
       const hint = document.createElement('div');
       hint.className = 'bar-hint';
@@ -466,38 +556,31 @@ function renderBar(g) {
       box.appendChild(hint);
     }
 
-    // Беру
+    // «Беру» — единственная кнопка защитника. «Бито» у него НЕТ.
     addBtn('take', 'Беру', 'себе', ICONS.take, () => {
       send({ t: 'act', action: 'take' });
       state.selected = null;
     });
+    return;
+  }
 
-    // Бито, когда всё отбито
-    if (table.length > 0 && undefended.length === 0) {
-      addBtn('pass', 'Бито', 'готово', ICONS.pass, () => {
-        send({ t: 'act', action: 'endBout' });
-        state.selected = null;
-      });
-    }
-  } else {
-    // атакующая сторона
-    const myTurnToAttack = table.length === 0
-      ? g.attackerId === me.id
-      : true;
+  // атакующая сторона
+  const myLead = table.length === 0 ? g.attackerId === me.id : true;
 
-    if (myTurnToAttack) {
-      addBtn('ready', 'Готов', 'выложить', ICONS.ready, () => {
-        if (!state.selected) return toast('Выберите карту или перетащите её на стол');
-        send({ t: 'act', action: 'attack', cardId: state.selected, cheat: !!g.opts?.cheat });
-        state.selected = null;
-      }, !hasSelection);
-    }
-    if (table.length > 0 && undefended.length === 0) {
-      addBtn('pass', 'Бито', 'закрыть', ICONS.pass, () => {
-        send({ t: 'act', action: 'endBout' });
-        state.selected = null;
-      });
-    }
+  if (myLead) {
+    addBtn('ready', 'Готов', 'выложить', ICONS.ready, () => {
+      if (!state.selected) return toast('Выберите карту или перетащите её на стол');
+      send({ t: 'act', action: 'attack', cardId: state.selected, cheat: !!g.opts?.cheat });
+      state.selected = null;
+    }, !hasSelection);
+  }
+
+  // «Бито» — только у атакующей стороны и только когда всё отбито
+  if (table.length > 0 && undefended.length === 0) {
+    addBtn('pass', 'Бито', 'закрыть', ICONS.pass, () => {
+      send({ t: 'act', action: 'endBout' });
+      state.selected = null;
+    });
   }
 }
 
@@ -685,6 +768,14 @@ function dropOnTable(card, g, fromEl) {
   tg?.HapticFeedback?.impactOccurred?.('medium');
 }
 
+// Выход из партии — засчитывается поражение
+$('exit-game').addEventListener('click', () => {
+  const g = state.game;
+  if (!g || g.phase === 'over') return toast('Партия не идёт');
+  if (!confirm('Выйти из партии? Вам засчитается поражение, а ставка сгорит.')) return;
+  send({ t: 'surrender' });
+});
+
 // Отмена последней выложенной карты
 $('undo-btn').addEventListener('click', () => {
   const g = state.game;
@@ -767,5 +858,17 @@ function toast(text) {
   toastTimer = setTimeout(() => el.classList.remove('on'), 2200);
   tg?.HapticFeedback?.notificationOccurred?.('warning');
 }
+
+window.addEventListener('resize', () => {
+  const h = $('hand');
+  if (h && state.game) layoutHand(h, state.game.you?.hand?.length || 0);
+});
+// пересчитываем раскладку после появления экрана стола
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && state.game) {
+    const h = $('hand');
+    if (h) layoutHand(h, state.game.you?.hand?.length || 0);
+  }
+});
 
 connect();

@@ -108,10 +108,15 @@ g.attack(A.id, atkCard.id);
 const canBeat = D.hand.find(c => beats(c, atkCard, g.trump));
 if (canBeat) {
   ok(g.defend(D.id, canBeat.id).ok === true, 'защищающийся отбился');
-  ok(g.endBout(D.id).ok === true, 'кон закрыт — бито');
+  // закрыть кон может только атакующая сторона — у защитника такой кнопки нет
+  ok(g.endBout(D.id).ok === false, 'защитник НЕ может сам отправить карты в отбой');
+  ok(g.endBout(A.id).ok === true, 'кон закрыт — бито (делает атакующий)');
   ok(g.table.length === 0, 'стол очищен');
 } else {
-  ok(g.takeCards(D.id).ok === true, 'нечем бить — забрал карты');
+  ok(g.takeCards(D.id).ok === true, 'нечем бить — сказал «беру»');
+  // теперь остальные пасуют, затем защитник забирает
+  for (const p of g.players) { if (p.idx !== g.defenderIdx) g.passPodkid(p.id); }
+  ok(g.confirmTake(D.id).ok === true, 'забрал карты после пасов');
   ok(D.hand.length >= 7, 'карты ушли защищающемуся');
 }
 ok(g.players.every(p => p.hand.length <= 6 || g.deck.length === 0 || p.idx === g.defenderIdx || p.hand.length <= 6),
@@ -199,6 +204,16 @@ ok(g.losers.length === 1 && g.losers[0] === 'p2', 'классика — прои
 // ---------- полные партии ботами ----------
 section('Симуляция полных партий');
 
+// Завершить фазу «беру»: все пасуют, защитник забирает
+function finishTake(g) {
+  const dIdx = g.takePending?.defenderIdx;
+  if (dIdx == null) return false;
+  for (const p of g.players) {
+    if (p.idx !== dIdx) g.passPodkid(p.id);
+  }
+  return g.confirmTake(g.players[dIdx].id).ok;
+}
+
 function autoPlay(opts, seed, maxSteps = 4000) {
   const g = new Durak({ ...opts, seed });
   let steps = 0;
@@ -206,12 +221,19 @@ function autoPlay(opts, seed, maxSteps = 4000) {
     const me = g.players[g.defenderIdx];
     const att = g.players[g.attackerIdx];
 
+    if (g.phase === 'take') {
+      finishTake(g);
+      continue;
+    }
+
     if (g.phase === 'defend') {
       const slot = g.table.find(s => !s.defense);
       const beatCard = slot ? me.hand.find(c => beats(c, slot.attack, g.trump)) : null;
       if (beatCard) { g.defend(me.id, beatCard.id); continue; }
-      if (g.table.every(s => s.defense)) { g.endBout(me.id); continue; }
-      g.takeCards(me.id); continue;
+      if (g.table.every(s => s.defense)) { g.endBout(att.id); continue; }
+      g.takeCards(me.id);
+      finishTake(g);
+      continue;
     }
 
     // фаза атаки: кто-нибудь легально кладёт карту
@@ -226,11 +248,12 @@ function autoPlay(opts, seed, maxSteps = 4000) {
     if (!moved) {
       // никто не может — закрываем кон как атакующий
       if (g.table.length > 0 && g.table.every(s => s.defense)) g.endBout(g.players[g.attackerIdx].id);
-      else if (g.table.length > 0) g.takeCards(g.players[g.defenderIdx].id);
+      else if (g.table.length > 0) { g.takeCards(g.players[g.defenderIdx].id); finishTake(g); }
       else {
         // защищающемуся нечем — просто передаём ход
         const dIdx = g.defenderIdx;
         g.takeCards(g.players[dIdx].id);
+        finishTake(g);
       }
     }
   }

@@ -9,7 +9,7 @@ const ok = (c, n, e = '') => { c ? (pass++, console.log('  ✓ ' + n)) : (fail++
 
 const srv = spawn('node', ['server/index.js'], {
   env: { ...process.env, PORT: String(PORT), BOT_TOKEN: '' },
-  cwd: '/home/user/durak', stdio: ['ignore', 'ignore', 'pipe']
+  cwd: '/home/user/durak-v4', stdio: ['ignore', 'ignore', 'pipe']
 });
 srv.stderr.on('data', d => process.stderr.write('[srv] ' + d));
 await sleep(900);
@@ -88,14 +88,14 @@ try {
   await sleep(800);
   ok(await page2.isVisible('#room-screen'), 'второй игрок вошёл в лобби');
 
-  // не хост — кнопки старта нет
-  const startVisible = await page2.isVisible('#start-game');
-  ok(!startVisible, 'у не-хоста нет кнопки старта');
+  // кнопка «Готов» есть у всех
+  ok(await page2.isVisible('#start-game'), 'у всех есть кнопка «Готов»');
 
-  // хост запускает
-  ok(await page.isEnabled('#start-game'), 'кнопка старта активна у хоста');
+  // оба жмут «Готов» — партия стартует
   await page.click('#start-game');
-  await sleep(1100);
+  await sleep(250);
+  await page2.click('#start-game');
+  await sleep(1200);
 
   const tableOn = await page.isVisible('#table-screen');
   ok(tableOn, 'хост перешёл к столу');
