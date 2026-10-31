@@ -1,14 +1,14 @@
 {
   "name": "durak-tg",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "description": "Дурак — Telegram Mini App",
   "type": "module",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
-    "test": "node tests/engine_rules.mjs && node tests/server_v6.mjs",
-    "test:ui": "node tests/ui_v6.mjs",
+    "test": "node tests/engine_rules.mjs && node tests/turn_test.mjs && node tests/server_v6.mjs",
+    "test:ui": "node tests/layout_check.mjs && node tests/final_check.mjs",
     "test:all": "sh tests/run_all_v6.sh"
   },
   "dependencies": {
