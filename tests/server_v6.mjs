@@ -3,17 +3,17 @@
 import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 
-const PORT = 3311;
+const PORT = 3961;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let pass = 0, fail = 0;
 const ok = (c, n, e = '') => { c ? (pass++, console.log('  ✓ ' + n)) : (fail++, console.log('  ✗ ' + n + (e ? ' — ' + e : ''))); };
 
 const srv = spawn('node', ['server/index.js'], {
   env: { ...process.env, PORT: String(PORT), BOT_TOKEN: '', NO_LISTEN: '' },
-  cwd: '/home/user/durak-v6', stdio: ['ignore', 'ignore', 'pipe']
+  cwd: '/home/user/durak-v8', stdio: ['ignore', 'ignore', 'pipe']
 });
 srv.stderr.on('data', d => process.stderr.write('[srv] ' + d));
-await sleep(1100);
+await sleep(1200);
 
 function client(id, name) {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
