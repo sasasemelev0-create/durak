@@ -19,7 +19,10 @@
   --green:#7bc043;
   --dim:rgba(255,255,255,.66);
   --line:rgba(255,255,255,.14);
+  /* безопасные зоны: значения подставляет JS из Telegram (полноэкранный режим),
+     fallback — системные отступы устройства */
   --safe-top:env(safe-area-inset-top, 0px);
+  --safe-bottom:env(safe-area-inset-bottom, 0px);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0;height:100%;overflow:hidden}
@@ -30,7 +33,14 @@ body{
 #app{height:100vh;height:100dvh;height:var(--app-h,100dvh);display:flex;flex-direction:column;overflow:hidden}
 
 /* ---------- экраны ---------- */
-.screen{display:none;flex-direction:column;height:100%;overflow-y:auto;overflow-x:hidden}
+.screen{
+  display:none;flex-direction:column;
+  flex:1 1 auto;min-height:0;          /* не 100%: сумма с вкладками не должна превышать экран */
+  overflow-y:auto;overflow-x:hidden;
+  /* отступ сверху для ВСЕХ экранов: в полноэкранном режиме Telegram
+     рисует свою шапку поверх приложения */
+  padding-top:var(--safe-top);
+}
 .screen.on{display:flex}
 
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px 8px;flex:none}
@@ -78,7 +88,11 @@ input[type=range]::-webkit-slider-thumb{
 .btn-small{width:auto;padding:8px 14px;font-size:13px;border-radius:10px}
 
 /* ---------- вкладки ---------- */
-.tabs{display:flex;flex:none;background:rgba(0,0,0,.28);border-top:1px solid var(--line);padding:6px 0}
+.tabs{
+  display:flex;flex:none;background:rgba(0,0,0,.28);border-top:1px solid var(--line);
+  padding:6px 0 calc(6px + var(--safe-bottom));
+  min-height:52px;align-items:center;
+}
 .tabs button{
   flex:1;background:none;border:0;color:rgba(255,255,255,.55);font-size:10px;
   display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;font-family:inherit;
@@ -126,7 +140,6 @@ input[type=range]::-webkit-slider-thumb{
 #table-screen{
   background:radial-gradient(ellipse 120% 80% at 50% 35%, var(--felt1) 0%, var(--felt2) 55%, var(--felt3) 100%);
   overflow:hidden;
-  padding-top:var(--safe-top);
 }
 
 /* верхняя строка */
@@ -305,7 +318,7 @@ input[type=range]::-webkit-slider-thumb{
 
 .player-bar{
   flex:none;background:#fff;border-radius:18px 18px 0 0;
-  padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+  padding:8px 10px calc(8px + var(--safe-bottom));
   display:flex;align-items:center;gap:8px;
   box-shadow:0 -3px 16px rgba(0,0,0,.3);
   color:#111820;min-width:0;
@@ -404,7 +417,7 @@ input[type=range]::-webkit-slider-thumb{
   .seat .frame{width:48px;height:48px}
   .seat{width:62px}
   .seat .sname{font-size:10px}
-  .player-bar{padding:6px 8px calc(6px + env(safe-area-inset-bottom))}
+  .player-bar{padding:6px 8px calc(6px + var(--safe-bottom))}
   .avatar-wrap .frame{width:42px;height:42px}
   .undo-btn{width:38px;height:38px}
   .bar-name{font-size:11px}

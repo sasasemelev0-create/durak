@@ -21,21 +21,71 @@ function currentHeight() {
   return h || 600;
 }
 
+// Безопасные зоны.
+// В полноэкранном режиме Telegram рисует свою шапку («Закрыть», меню) ПОВЕРХ
+// приложения, поэтому сверху нужен отступ, иначе заголовок уезжает под кнопку.
+// Telegram (Bot API 8+) отдаёт contentSafeAreaInset / safeAreaInset; если их нет —
+// берём разумный запас для полноэкранного режима.
+// Высота собственной шапки Telegram, которая рисуется ПОВЕРХ приложения
+// (кнопка «Закрыть», меню «⋮»). В полноэкранном режиме она перекрывает верх приложения.
+const TG_HEADER = 56;
+
+// Запущены ли мы внутри настоящего клиента Telegram.
+// Библиотека из CDN бывает старой (6.0): isFullscreen там всегда false,
+// contentSafeAreaInset отсутствует, initData пустой. Единственный надёжный признак —
+// platform: у настоящего клиента это 'android' | 'ios' | 'macos' | 'tdesktop' | 'web' | 'weba',
+// у страницы, открытой в обычном браузере, — 'unknown'.
+function inTelegram() {
+  // Признаки в порядке надёжности. Библиотека telegram-web-app.js из CDN
+  // бывает версии 6.0: platform там 'unknown', isFullscreen всегда false,
+  // contentSafeAreaInset = 0. Поэтому опираемся на то, что настоящий клиент
+  // ВСЕГДА передаёт параметры tgWebApp* в адресе страницы и непустой initData.
+  if (tg?.platform && tg.platform !== 'unknown') return true;
+  if (tg?.initData) return true;
+  const q = location.search + location.hash;
+  if (/tgWebApp(Platform|Data|Version|StartParam)/.test(q)) return true;
+  // запуск внутри iframe/webview клиента Telegram
+  if (window.parent && window.parent !== window) return true;
+  return false;
+}
+
+function applySafeInsets() {
+  const root = document.documentElement.style;
+  const csTop = Number(tg?.contentSafeAreaInset?.top) || 0;
+  const csBottom = Number(tg?.contentSafeAreaInset?.bottom) || 0;
+  const saTop = Number(tg?.safeAreaInset?.top) || 0;
+  const saBottom = Number(tg?.safeAreaInset?.bottom) || 0;
+
+  if (!inTelegram()) {
+    // обычный браузер: только системные вырезы
+    root.setProperty('--safe-top', 'env(safe-area-inset-top, 0px)');
+    root.setProperty('--safe-bottom', 'env(safe-area-inset-bottom, 0px)');
+    return;
+  }
+
+  // Клиент сообщает инсет (новые версии) — используем его, он точный.
+  // Не сообщает (старые) — резервируем место под шапку Telegram.
+  const topFromClient = Math.max(csTop, saTop);
+  root.setProperty('--safe-top', topFromClient > 0
+    ? topFromClient + 'px'
+    : `calc(env(safe-area-inset-top, 0px) + ${TG_HEADER}px)`);
+
+  const bottom = Math.max(csBottom, saBottom);
+  root.setProperty('--safe-bottom', bottom > 0 ? bottom + 'px' : 'env(safe-area-inset-bottom, 0px)');
+}
+
 function applyViewportHeight() {
   const h = currentHeight();
   document.documentElement.style.setProperty('--app-h', h + 'px');
-  // переменная для отступов сверху/снизу — чтобы шапка не заезжала под статус-бар
-  const top = tg?.contentSafeAreaInset?.top ?? 0;
-  if (top) document.documentElement.style.setProperty('--safe-top', top + 'px');
+  applySafeInsets();
   if (typeof state !== 'undefined' && state?.game) {
     layoutHand($('hand'), state.game.you?.hand?.length || 0);
   }
 }
 
 // подписываемся на все источники изменений
-tg?.onEvent?.('viewportChanged', applyViewportHeight);
-tg?.onEvent?.('safeAreaChanged', applyViewportHeight);
-tg?.onEvent?.('contentSafeAreaChanged', applyViewportHeight);
+['viewportChanged', 'safeAreaChanged', 'contentSafeAreaChanged', 'fullscreenChanged', 'fullscreenFailed']
+  .forEach(ev => tg?.onEvent?.(ev, applyViewportHeight));
 window.addEventListener('resize', applyViewportHeight);
 window.addEventListener('orientationchange', () => setTimeout(applyViewportHeight, 120));
 window.visualViewport?.addEventListener('resize', applyViewportHeight);
@@ -924,7 +974,11 @@ function parseStartParam() {
 }
 
 // хук для автотестов
-window.__durak = { layoutHand, state, get screen() { return SCREENS.find(id => $(id).classList.contains('on')); } };
+window.__durak = {
+  layoutHand, state, applyViewportHeight,
+  refreshInsets: applyViewportHeight,
+  get screen() { return SCREENS.find(id => $(id).classList.contains('on')); },
+};
 
 state.pendingJoinId = parseStartParam();
 showTab('profile');
@@ -932,5 +986,8 @@ connect();
 
 // Telegram раскрывает мини-приложение не сразу: замеряем высоту несколько раз.
 tg?.expand?.();
+// полноэкранный режим: Telegram присылает инсеты не мгновенно
+if (tg?.requestFullscreen && !tg?.isFullscreen) { try { tg.requestFullscreen(); } catch {} }
 applyViewportHeight();
-[0, 50, 120, 250, 400, 700, 1100, 1800].forEach(ms => setTimeout(applyViewportHeight, ms));
+[0, 50, 100, 160, 250, 350, 500, 700, 1000, 1400, 1800, 2400]
+  .forEach(ms => setTimeout(applyViewportHeight, ms));
