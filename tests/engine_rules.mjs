@@ -116,20 +116,18 @@ console.log('\nПравило: перевод картой того же ран�
   } else ok(true, 'пропуск: нет карты того же ранга');
 }
 
-console.log('\nПравило: шулерство — карта возвращается шулеру и он играет честно');
+console.log('\nПравило: шулерство — проверка возвращает карту и блокирует шулера');
 {
   const g = mk(3, { seed: 15, cheat: true });
   const A = g.players[g.attackerIdx];
   const other = g.players[(g.attackerIdx + 2) % 3];
-  // первая карта на стол честная
   g.attack(A.id, A.hand[0].id);
-  // шулер (other) кладёт карту вне правил: ранг, которого нет на столе
   const bad = other.hand.find(c => !g.tableRanks().has(c.r));
   if (bad && g.defenderIdx !== other.idx) {
     const r = g.attack(other.id, bad.id, { cheat: true });
-    ok(r.cheat === true && g.pendingCheat, 'шулерская карта помечена как спорная');
-    const acc = g.accuse(A.id, other.id);
-    ok(acc.ok === true, 'поймали — обвинение принято');
+    ok(r.ok === true, 'шулерская карта принята на стол (без подсветки)');
+    const acc = g.checkCard(A.id, bad.id);
+    ok(acc.ok && acc.legal === false, 'проверка нашла нарушение');
     ok(other.hand.some(c => c.id === bad.id), 'карта вернулась шулеру в руку');
     ok(other.cheatsLocked === true, 'шулер больше не может шулерить');
     const again = g.attack(other.id, other.hand.find(c => !g.tableRanks().has(c.r))?.id || 'x', { cheat: true });

@@ -9,8 +9,8 @@ let pass = 0, fail = 0;
 const ok = (c, n, e = '') => { c ? (pass++, console.log('  ✓ ' + n)) : (fail++, console.log('  ✗ ' + n + (e ? ' — ' + e : ''))); };
 
 const srv = spawn('node', ['server/index.js'], {
-  env: { ...process.env, PORT: String(PORT), BOT_TOKEN: '', NO_LISTEN: '' },
-  cwd: '/home/user/durak-v8', stdio: ['ignore', 'ignore', 'pipe']
+  env: { ...process.env, PORT: String(PORT), BOT_TOKEN: '' },
+  cwd: new URL('..', import.meta.url).pathname, stdio: ['ignore', 'ignore', 'pipe']
 });
 srv.stderr.on('data', d => process.stderr.write('[srv] ' + d));
 await sleep(1200);
@@ -59,7 +59,11 @@ ok(A.room()?.showReady === false, 'в партии кнопка «Готов» �
 console.log('\nВыход из партии → поражение и возврат в меню');
 A.send({ t: 'surrender' }); await sleep(350);
 ok(A.left(), 'вышедший получил команду выйти в главное меню');
-ok(!A.room() || A.room()?.room?.id !== rid || true, 'вышедший больше не в лобби');
+// после выхода сервер шлёт `left`; состояние комнаты для A больше не приходит
+const roomAfter = A.inbox.filter(m => m.t === 'room').slice(-1)[0];
+const leftAt = A.inbox.findIndex(m => m.t === 'left');
+const roomAfterLeft = A.inbox.slice(leftAt + 1).some(m => m.t === 'room');
+ok(leftAt >= 0 && !roomAfterLeft, 'вышедший больше не получает состояние лобби');
 
 // оставшиеся двое: один из них — в лобби из двух
 await sleep(200);

@@ -217,15 +217,17 @@ function handle(ws, msg) {
 
       let res;
       switch (msg.action) {
+        // cheat — намеренно неправильный ход (только в режиме с шулерами; движок сам это проверяет)
         case 'attack': res = g.attack(me.id, msg.cardId, { cheat: !!msg.cheat }); break;
-        case 'defend': res = g.defend(me.id, msg.cardId, msg.targetCardId || null); break;
-        case 'transfer': res = g.transfer(me.id, msg.cardId); break;
+        case 'defend': res = g.defend(me.id, msg.cardId, msg.targetCardId || null, { cheat: !!msg.cheat }); break;
+        case 'transfer': res = g.transfer(me.id, msg.cardId, { cheat: !!msg.cheat }); break;
         case 'endBout': res = g.endBout(me.id); break;
         case 'take': res = g.takeCards(me.id); break;
         case 'passPodkid': res = g.phase === 'podkid' || g.podkidPending ? g.passPodkidAfterBito(me.id) : g.passPodkid(me.id); break;
         case 'confirmTake': res = g.confirmTake(me.id); break;
         case 'recall': res = g.recall(me.id, msg.cardId); break;
-        case 'accuse': res = g.accuse(me.id, msg.targetId); break;
+        // проверка любой карты на столе любым игроком (не шулером-владельцем); без штрафа
+        case 'checkCard': res = g.checkCard(me.id, msg.cardId); break;
         default: res = { ok: false, why: 'Неизвестное действие' };
       }
       if (!res.ok) send(ws, { t: 'error', why: res.why });
@@ -367,7 +369,7 @@ function createRoom(host, opts, password) {
       transfer: opts.transfer !== false,
       cheat: opts.cheat !== false,
       lossMode: opts.lossMode === 'draw' ? 'draw' : 'classic',
-      bet: clamp(Number(opts.bet) || 0, 0, 5000),
+      bet: clamp(Math.round(Number(opts.bet) || 0), 0, 10000),
     },
   };
   rooms.set(id, room);

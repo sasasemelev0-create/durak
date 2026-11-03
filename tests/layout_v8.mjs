@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 const PORT=3801, sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let pass=0, fail=0;
 const ok=(c,n,e='')=>{c?(pass++,console.log('  ✓ '+n)):(fail++,console.log('  ✗ '+n+(e?' — '+e:'')));};
-const srv=spawn('node',['server/index.js'],{env:{...process.env,PORT:String(PORT),BOT_TOKEN:'',NO_LISTEN:''},cwd:'/home/user/durak-v8',stdio:['ignore','ignore','pipe']});
+const srv=spawn('node',['server/index.js'],{env:{...process.env,PORT:String(PORT),BOT_TOKEN:''},cwd:new URL('..',import.meta.url).pathname.replace(/\/$/,''),stdio:['ignore','ignore','pipe']});
 srv.stderr.on('data',d=>process.stderr.write('[srv]'+d));
 await sleep(1300);
 const browser=await chromium.launch();

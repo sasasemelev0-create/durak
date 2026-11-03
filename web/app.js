@@ -3,6 +3,17 @@ const tg = window.Telegram?.WebApp;
 tg?.ready?.();
 tg?.expand?.();
 
+// Высота приложения: берём реальную высоту видимой области Telegram.
+// 100vh в мини-приложении при запуске по ссылке не совпадает с экраном (особенно до expand),
+// поэтому высоту задаём переменной и обновляем при каждом изменении viewport.
+function applyViewportHeight() {
+  const h = tg?.viewportStableHeight || tg?.viewportHeight || window.innerHeight;
+  document.documentElement.style.setProperty('--app-h', h + 'px');
+  if (state?.game) layoutHand($('hand'), state.game.you?.hand?.length || 0);
+}
+tg?.onEvent?.('viewportChanged', applyViewportHeight);
+window.addEventListener('resize', applyViewportHeight);
+
 const $ = (id) => document.getElementById(id);
 const SUIT = ['♠', '♥', '♦', '♣'];
 const RANK = { 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '10', 11: 'В', 12: 'Д', 13: 'К', 14: 'Т' };
@@ -259,10 +270,27 @@ document.querySelectorAll('.mode').forEach(btn => btn.addEventListener('click', 
 }));
 
 const betRange = $('bet-range');
-betRange.addEventListener('input', () => {
-  const v = Number(betRange.value);
-  $('bet-value').textContent = v;
+const BET_MAX = 10000;
+
+function setBet(v) {
+  v = Math.max(0, Math.min(BET_MAX, Math.round(Number(v) || 0)));
   state.createOpts.bet = v;
+  $('bet-value').textContent = v;
+  // ползунок показывает значение, если оно ≤ 2500; выше — ползунок на максимуме
+  betRange.value = String(Math.min(2500, v - (v % 50)));
+  betRange.style.setProperty('--p', (Math.min(v, 2500) / 2500 * 100) + '%');
+}
+
+betRange.addEventListener('input', () => setBet(Number(betRange.value)));
+
+// ручной ввод: нажали на сумму — появилось поле
+$('bet-value').addEventListener('click', () => {
+  const v = prompt('Введите ставку (от 0 до 10000 ₽, кратно 50):', String(state.createOpts.bet));
+  if (v === null) return;
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n < 0) return toast('Введите число от 0 до 10000');
+  if (n > BET_MAX) { toast('Максимальная ставка 10000 ₽'); return setBet(BET_MAX); }
+  setBet(n);
 });
 
 $('do-create').addEventListener('click', () => {
@@ -390,13 +418,22 @@ function renderTable(g, roomMsg) {
   // колода
   $('deck-count').textContent = g.deckCount;
   $('deck-pile').classList.toggle('empty', g.deckCount === 0);
+  // козырь: пока есть колода — карта под ней; когда колода кончилась — только символ масти
   const tc = $('trump-card');
+  const tcColor = isRed(g.trump) ? 'var(--suit-red)' : 'var(--ink)';
   if (g.deckCount > 0 && g.trumpCard) {
     tc.style.display = 'flex';
+    tc.classList.remove('suit-only');
     $('trump-rank').textContent = RANK[g.trumpCard.r];
     $('trump-suit').textContent = SUIT[g.trumpCard.s];
-    tc.style.color = isRed(g.trumpCard.s) ? 'var(--suit-red)' : 'var(--ink)';
-  } else tc.style.display = 'none';
+    tc.style.color = tcColor;
+  } else {
+    tc.style.display = 'flex';
+    tc.classList.add('suit-only');
+    $('trump-rank').textContent = '';
+    $('trump-suit').textContent = SUIT[g.trump];
+    tc.style.color = tcColor;
+  }
 
   // отбой
   const ds = $('discard-stack');
@@ -411,26 +448,24 @@ function renderTable(g, roomMsg) {
 
   // карты на столе
   const bf = $('battlefield');
-  const sig = JSON.stringify([g.table.map(s => [s.attack.id, s.defense?.id]), g.you?.canTransfer, g.pendingCheat?.cardId]);
+  const sig = JSON.stringify([g.table.map(s => [s.attack.id, s.defense?.id]), g.you?.canTransfer]);
   if (sig !== prevTableSig) {
     bf.innerHTML = '';
-    const suspicion = g.pendingCheat?.cardId || null;
     g.table.forEach(slot => {
       const s = document.createElement('div');
       s.className = 'slot';
       s.dataset.attackId = slot.attack.id;
-      if (suspicion && slot.attack.id === suspicion) {
-        s.classList.add('suspect');
-        s.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          if (g.you?.id === g.pendingCheat.playerId) return toast('Себя обвинять нельзя');
-          send({ t: 'act', action: 'accuse', targetId: g.pendingCheat.playerId });
-        });
-      }
+      // шулерская карта ничем не выделена: проверка доступна по нажатию на ЛЮБУЮ карту на столе
       const a = cardEl(slot.attack, { dim: !!slot.defense });
       a.classList.add('atk');
+      a.addEventListener('click', (ev) => { ev.stopPropagation(); checkTableCard(slot.attack.id); });
       s.appendChild(a);
-      if (slot.defense) { const df = cardEl(slot.defense); df.classList.add('def'); s.appendChild(df); }
+      if (slot.defense) {
+        const df = cardEl(slot.defense);
+        df.classList.add('def');
+        df.addEventListener('click', (ev) => { ev.stopPropagation(); checkTableCard(slot.defense.id); });
+        s.appendChild(df);
+      }
       bf.appendChild(s);
     });
     // зона перевода — только пока защитник и ничего не отбито
@@ -555,6 +590,16 @@ function dealAnimation(n) {
   }
 }
 
+// ---------------- проверка карт на столе ----------------
+// Любой игрок (не владелец карты) может проверить любую карту на столе, сколько угодно раз.
+// Сервер сам решает: нарушение — карта уходит шулеру; по правилам — ничего не происходит.
+function checkTableCard(cardId) {
+  const g = state.game;
+  if (!g || !g.table.length) return;
+  if (!g.opts?.cheat) return;            // в режиме без шулеров проверки нет
+  send({ t: 'act', action: 'checkCard', cardId });
+}
+
 // ---------------- кнопки ----------------
 const ICONS = {
   take: '<svg viewBox="0 0 24 24"><path d="M17 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm-7 4v6l4-3z"/></svg>',
@@ -568,10 +613,46 @@ function hint(box, html) {
   box.appendChild(h);
 }
 
+// Понятный ход: кто ходит — подсвечен; свой ход — плашка и пульс руки
+function markTurn(g) {
+  const me = g.you;
+  const myTurn = !!me && (me.isAttacker || me.isDefender || me.canPodkid || me.canTransfer
+    || (g.takePhase?.active && !me.isDefender && !me.passed)
+    || (g.podkidPhase?.active && !me.isDefender && !me.passed));
+  $('hand').classList.toggle('my-turn', myTurn);
+  $('me-wrap').classList.toggle('turn', !!me?.isAttacker);
+
+  let text = '';
+  if (g.phase === 'over') text = '';
+  else if (g.takePhase?.active) {
+    text = me?.isDefender ? 'Вы берёте — ждём подкидывания'
+      : (me?.passed ? 'Вы сказали пас' : 'Подкиньте карту или скажите пас');
+  } else if (g.podkidPhase?.active) {
+    text = me?.isDefender ? 'Ждём подкидывания'
+      : (me?.passed ? 'Вы сказали пас' : 'Бито — подкиньте карту или пас');
+  } else if (me?.isDefender) text = 'Ваш ход — отбивайтесь или берите';
+  else if (me?.isAttacker && g.table.length === 0) text = 'Ваш ход — выложите карту';
+  else if (me?.isAttacker) text = 'Подкиньте карту или нажмите «Бито»';
+  else if (me?.canPodkid) text = 'Можно подкинуть карту';
+
+  const turnBox = $('turn-banner');
+  turnBox.textContent = text;
+  turnBox.classList.toggle('hide', !text);
+  turnBox.classList.toggle('mine', myTurn);
+
+  // подсветка аватарок соперников: тот, чей сейчас ход
+  document.querySelectorAll('#seats .seat').forEach(el => {
+    const id = el.dataset.profile;
+    el.classList.toggle('turn', id === g.attackerId && !g.takePhase && !g.podkidPhase);
+    el.classList.toggle('defender', id === g.defenderId);
+  });
+}
+
 function renderBar(g) {
   const me = g.you;
   const box = $('bar-btns');
   box.innerHTML = '';
+  markTurn(g);
   if (!me || g.phase === 'over') return;
 
   const table = g.table || [];
@@ -586,13 +667,6 @@ function renderBar(g) {
     box.appendChild(b);
     return b;
   };
-
-  // спорная карта
-  if (g.pendingCheat && g.pendingCheat.playerId !== me.id) {
-    addBtn('take', 'Поймать', esc(g.pendingCheat.playerName), ICONS.take,
-      () => send({ t: 'act', action: 'accuse', targetId: g.pendingCheat.playerId }));
-    return;
-  }
 
   // фаза «беру»
   if (g.takePhase?.active) {
@@ -812,5 +886,7 @@ function parseStartParam() {
 window.__durak = { layoutHand, state, get screen() { return SCREENS.find(id => $(id).classList.contains('on')); } };
 
 state.pendingJoinId = parseStartParam();
+applyViewportHeight();
+setTimeout(applyViewportHeight, 300);
 showTab('profile');
 connect();
