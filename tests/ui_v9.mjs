@@ -62,8 +62,10 @@ const defBanner=await defP.evaluate(()=>document.getElementById('turn-banner').t
 ok(/выложите карту/i.test(attBanner),'у атакующего: «Ваш ход — выложите карту»', attBanner);
 ok(/отбивайтесь|берите|Ваш ход/i.test(defBanner),'у защитника понятная подпись', defBanner);
 ok(await attP.evaluate(()=>document.getElementById('hand').classList.contains('my-turn')),'рука атакующего подсвечена (мой ход)');
+// подсвечиваться должна ровно одна рука — у того, чей ход
 const defHandMine=await defP.evaluate(()=>document.getElementById('hand').classList.contains('my-turn'));
-ok(defHandMine===true,'у защитника (он тоже должен отбиваться) рука подсвечена как «мой ход»', String(defHandMine));
+const attHandMine=await attP.evaluate(()=>document.getElementById('hand').classList.contains('my-turn'));
+ok(attHandMine!==defHandMine,'подсвечена ровно одна рука — у того, чей ход', `атакующий=${attHandMine}, защитник=${defHandMine}`);
 
 console.log('\nКозырь-символ после колоды');
 const deckInfo=await A.evaluate(()=>({count:window.__durak.state.game.deckCount, trump:window.__durak.state.game.trump}));

@@ -6,13 +6,39 @@ tg?.expand?.();
 // Высота приложения: берём реальную высоту видимой области Telegram.
 // 100vh в мини-приложении при запуске по ссылке не совпадает с экраном (особенно до expand),
 // поэтому высоту задаём переменной и обновляем при каждом изменении viewport.
-function applyViewportHeight() {
-  const h = tg?.viewportStableHeight || tg?.viewportHeight || window.innerHeight;
-  document.documentElement.style.setProperty('--app-h', h + 'px');
-  if (state?.game) layoutHand($('hand'), state.game.you?.hand?.length || 0);
+// Высота приложения.
+// При запуске по ссылке Telegram открывает мини-приложение в сжатом виде и расширяет
+// его не сразу, поэтому одного замера недостаточно: пересчитываем несколько раз
+// и на каждое событие изменения видимой области.
+// Источники по приоритету: stable height Telegram → видимая область visualViewport → innerHeight.
+function currentHeight() {
+  const vv = window.visualViewport;
+  const fromTg = tg?.viewportStableHeight || tg?.viewportHeight;
+  const fromVv = vv ? Math.round(vv.height) : 0;
+  const fromWin = window.innerHeight || 0;
+  // берём максимальное разумное: Telegram иногда отдаёт устаревшее значение
+  const h = Math.max(fromTg || 0, fromVv || 0, fromWin || 0);
+  return h || 600;
 }
+
+function applyViewportHeight() {
+  const h = currentHeight();
+  document.documentElement.style.setProperty('--app-h', h + 'px');
+  // переменная для отступов сверху/снизу — чтобы шапка не заезжала под статус-бар
+  const top = tg?.contentSafeAreaInset?.top ?? 0;
+  if (top) document.documentElement.style.setProperty('--safe-top', top + 'px');
+  if (typeof state !== 'undefined' && state?.game) {
+    layoutHand($('hand'), state.game.you?.hand?.length || 0);
+  }
+}
+
+// подписываемся на все источники изменений
 tg?.onEvent?.('viewportChanged', applyViewportHeight);
+tg?.onEvent?.('safeAreaChanged', applyViewportHeight);
+tg?.onEvent?.('contentSafeAreaChanged', applyViewportHeight);
 window.addEventListener('resize', applyViewportHeight);
+window.addEventListener('orientationchange', () => setTimeout(applyViewportHeight, 120));
+window.visualViewport?.addEventListener('resize', applyViewportHeight);
 
 const $ = (id) => document.getElementById(id);
 const SUIT = ['♠', '♥', '♦', '♣'];
@@ -614,11 +640,26 @@ function hint(box, html) {
 }
 
 // Понятный ход: кто ходит — подсвечен; свой ход — плашка и пульс руки
+// Чей ход прямо сейчас — ровно один игрок за столом.
+// Подсвечивается только тот, от кого ждут действия:
+//   • на столе есть неотбитая карта → ждём защитника;
+//   • стол пуст или всё отбито → ждём атакующего (выложить / нажать «Бито»);
+//   • защитник взял → ждём его подтверждения;
+//   • идёт подкидывание после «Бито» → ждём остальных (не защитника).
+function whoseTurnId(g) {
+  if (!g || g.phase === 'over') return null;
+  if (g.takePhase?.active) return g.takePhase.defenderId;
+  if (g.podkidPhase?.active) return null;              // ждём нескольких — без подсветки одного
+  const hasUndefended = (g.table || []).some(s => !s.defense);
+  if (hasUndefended) return g.defenderId;
+  return g.attackerId;
+}
+
 function markTurn(g) {
   const me = g.you;
-  const myTurn = !!me && (me.isAttacker || me.isDefender || me.canPodkid || me.canTransfer
-    || (g.takePhase?.active && !me.isDefender && !me.passed)
-    || (g.podkidPhase?.active && !me.isDefender && !me.passed));
+  const turnId = whoseTurnId(g);
+  // подсветка руки — только у того, чей ход
+  const myTurn = !!me && turnId === me.id;
   $('hand').classList.toggle('my-turn', myTurn);
   $('me-wrap').classList.toggle('turn', !!me?.isAttacker);
 
@@ -643,7 +684,7 @@ function markTurn(g) {
   // подсветка аватарок соперников: тот, чей сейчас ход
   document.querySelectorAll('#seats .seat').forEach(el => {
     const id = el.dataset.profile;
-    el.classList.toggle('turn', id === g.attackerId && !g.takePhase && !g.podkidPhase);
+    el.classList.toggle('turn', !!turnId && id === turnId);
     el.classList.toggle('defender', id === g.defenderId);
   });
 }
@@ -886,7 +927,10 @@ function parseStartParam() {
 window.__durak = { layoutHand, state, get screen() { return SCREENS.find(id => $(id).classList.contains('on')); } };
 
 state.pendingJoinId = parseStartParam();
-applyViewportHeight();
-setTimeout(applyViewportHeight, 300);
 showTab('profile');
 connect();
+
+// Telegram раскрывает мини-приложение не сразу: замеряем высоту несколько раз.
+tg?.expand?.();
+applyViewportHeight();
+[0, 50, 120, 250, 400, 700, 1100, 1800].forEach(ms => setTimeout(applyViewportHeight, ms));
