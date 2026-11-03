@@ -1,6 +1,6 @@
 {
   "name": "durak-tg",
-  "version": "11.0.0",
+  "version": "12.0.0",
   "description": "Дурак — Telegram Mini App",
   "type": "module",
   "main": "server/index.js",

@@ -11,13 +11,17 @@ tg?.expand?.();
 // его не сразу, поэтому одного замера недостаточно: пересчитываем несколько раз
 // и на каждое событие изменения видимой области.
 // Источники по приоритету: stable height Telegram → видимая область visualViewport → innerHeight.
+// Высота приложения = фактическая высота области, в которой мы нарисованы.
+// Раньше здесь брался максимум из нескольких источников, и на части устройств
+// он превышал реальную высоту webview — низ уезжал за экран, а на других
+// телефонах всё было нормально. Отсюда и разница между устройствами.
 function currentHeight() {
   const vv = window.visualViewport;
-  const fromTg = tg?.viewportStableHeight || tg?.viewportHeight;
-  const fromVv = vv ? Math.round(vv.height) : 0;
-  const fromWin = window.innerHeight || 0;
-  // берём максимальное разумное: Telegram иногда отдаёт устаревшее значение
-  const h = Math.max(fromTg || 0, fromVv || 0, fromWin || 0);
+  const candidates = [
+    vv ? Math.round(vv.height) : 0,
+    window.innerHeight || 0,
+  ].filter(h => h > 0);
+  const h = candidates.length ? Math.min(...candidates) : 0;
   return h || 600;
 }
 
@@ -26,9 +30,13 @@ function currentHeight() {
 // приложения, поэтому сверху нужен отступ, иначе заголовок уезжает под кнопку.
 // Telegram (Bot API 8+) отдаёт contentSafeAreaInset / safeAreaInset; если их нет —
 // берём разумный запас для полноэкранного режима.
-// Высота собственной шапки Telegram, которая рисуется ПОВЕРХ приложения
-// (кнопка «Закрыть», меню «⋮»). В полноэкранном режиме она перекрывает верх приложения.
+// Шапка Telegram в полноэкранном режиме рисуется ПОВЕРХ приложения.
+//   TG_HEADER  — высота самих кнопок (одинаковая на всех устройствах)
+//   TG_MIN_TOP — минимальный безопасный отступ: строка состояния + кнопки.
+//                Именно это значение делает вид одинаковым на разных экранах:
+//                ниже него интерфейс не поднимается никогда.
 const TG_HEADER = 56;
+const TG_MIN_TOP = 96;
 
 // Запущены ли мы внутри настоящего клиента Telegram.
 // Библиотека из CDN бывает старой (6.0): isFullscreen там всегда false,
@@ -63,12 +71,14 @@ function applySafeInsets() {
     return;
   }
 
-  // Клиент сообщает инсет (новые версии) — используем его, он точный.
-  // Не сообщает (старые) — резервируем место под шапку Telegram.
+  // Отступ сверху. Шапка Telegram = строка состояния + ~56 px кнопок.
+  // safe-area-inset-top на Android часто 0, на iPhone 47..59 px — из-за этого
+  // один и тот же отступ перекрывал интерфейс по-разному на разных телефонах.
+  // Берём ГАРАНТИРОВАННЫЙ минимум и увеличиваем, если вырез больше или
+  // клиент сообщает точный инсет.
   const topFromClient = Math.max(csTop, saTop);
-  root.setProperty('--safe-top', topFromClient > 0
-    ? topFromClient + 'px'
-    : `calc(env(safe-area-inset-top, 0px) + ${TG_HEADER}px)`);
+  root.setProperty('--safe-top',
+    `max(${TG_MIN_TOP}px, ${topFromClient}px, calc(env(safe-area-inset-top, 0px) + ${TG_HEADER}px))`);
 
   const bottom = Math.max(csBottom, saBottom);
   root.setProperty('--safe-bottom', bottom > 0 ? bottom + 'px' : 'env(safe-area-inset-bottom, 0px)');

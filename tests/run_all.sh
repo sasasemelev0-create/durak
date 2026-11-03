@@ -10,3 +10,4 @@ node tests/ui_v9.mjs
 node tests/turn_light.mjs
 node tests/height_test.mjs
 node tests/insets_test.mjs
+node tests/chrome_test.mjs
